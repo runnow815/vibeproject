@@ -1,0 +1,11 @@
+# Git internal files from subprojects
+**/.git/
+
+# Editor files
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db

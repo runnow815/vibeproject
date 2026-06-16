@@ -1,0 +1,1115 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>五子棋 · 古典棋韵</title>
+<style>
+  /* ===== 全局重置 & 基础 ===== */
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: "STKaiti", "KaiTi", "楷体", "Noto Serif SC", serif;
+    background: #f5f0e0;
+    background-image:
+      radial-gradient(ellipse at 20% 50%, rgba(200,180,150,0.15) 0%, transparent 70%),
+      radial-gradient(ellipse at 80% 50%, rgba(200,180,150,0.15) 0%, transparent 70%);
+    min-height: 100vh;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    color: #2c1810;
+    user-select: none;
+    padding: 20px;
+  }
+
+  /* ===== 主容器 ===== */
+  .container {
+    background: #faf6ee;
+    border-radius: 12px;
+    box-shadow:
+      0 8px 32px rgba(44,24,16,0.12),
+      0 2px 8px rgba(44,24,16,0.08);
+    padding: 28px 32px 24px;
+    max-width: 920px;
+    width: 100%;
+    position: relative;
+  }
+
+  /* ===== 装饰边框 ===== */
+  .container::before,
+  .container::after {
+    content: '';
+    position: absolute;
+    left: 12px; right: 12px;
+    height: 2px;
+    background: linear-gradient(90deg, transparent, #c0392b, transparent);
+    opacity: 0.4;
+  }
+  .container::before { top: 8px; }
+  .container::after  { bottom: 8px; }
+
+  /* ===== 头部标题 ===== */
+  .header {
+    text-align: center;
+    margin-bottom: 20px;
+    position: relative;
+  }
+  .header h1 {
+    font-size: 32px;
+    font-weight: 400;
+    letter-spacing: 12px;
+    color: #2c1810;
+    text-shadow: 0 1px 2px rgba(0,0,0,0.10);
+  }
+  .header .subtitle {
+    font-size: 13px;
+    color: #8a7a6a;
+    letter-spacing: 6px;
+    margin-top: 2px;
+    font-style: italic;
+  }
+  .header::after {
+    content: '';
+    display: block;
+    width: 80px;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, #c0392b, transparent);
+    margin: 8px auto 0;
+    opacity: 0.5;
+  }
+
+  /* ===== 主内容区：棋盘 + 面板 ===== */
+  .main-area {
+    display: flex;
+    gap: 24px;
+    align-items: flex-start;
+  }
+
+  /* ===== 棋盘容器 ===== */
+  .board-wrapper {
+    flex-shrink: 0;
+    padding: 6px;
+    background: linear-gradient(135deg, #a08060, #8a6e4e);
+    border-radius: 6px;
+    box-shadow:
+      inset 0 1px 0 rgba(255,255,255,0.15),
+      0 3px 10px rgba(0,0,0,0.2);
+  }
+  .board-inner {
+    background: #e8c87a;
+    background-image:
+      repeating-linear-gradient(
+        90deg,
+        transparent, transparent 40px,
+        rgba(160,128,70,0.08) 40px, rgba(160,128,70,0.08) 41px
+      ),
+      repeating-linear-gradient(
+        0deg,
+        transparent, transparent 60px,
+        rgba(160,128,70,0.06) 60px, rgba(160,128,70,0.06) 61px
+      );
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  #boardCanvas {
+    display: block;
+    border-radius: 4px;
+  }
+
+  /* ===== 右侧面板 ===== */
+  .side-panel {
+    flex: 1;
+    min-width: 220px;
+    max-width: 270px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  /* ===== 计时器区 ===== */
+  .timer-section {
+    background: #f8f4ec;
+    border: 1px solid #e0d5c5;
+    border-radius: 6px;
+    padding: 12px 14px;
+  }
+  .timer-section .section-title {
+    font-size: 13px;
+    color: #8a7a6a;
+    text-align: center;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+  }
+  .timer-row {
+    display: flex;
+    align-items: center;
+    padding: 6px 0;
+    border-bottom: 1px dashed #e8e0d4;
+    transition: background 0.2s;
+  }
+  .timer-row:last-child { border-bottom: none; }
+  .timer-row.active-turn {
+    background: rgba(192,57,43,0.06);
+    border-radius: 4px;
+    padding: 6px 4px;
+  }
+  .timer-stone {
+    width: 20px; height: 20px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-right: 8px;
+    border: 1px solid rgba(0,0,0,0.15);
+  }
+  .timer-stone.black {
+    background: radial-gradient(circle at 35% 35%, #555, #111 70%, #000);
+  }
+  .timer-stone.white {
+    background: radial-gradient(circle at 35% 35%, #fff, #e8e8e8 60%, #ccc);
+  }
+  .timer-label {
+    font-size: 15px;
+    flex: 1;
+  }
+  .timer-display {
+    font-size: 18px;
+    font-weight: 500;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: 1px;
+    min-width: 70px;
+    text-align: right;
+  }
+  .timer-display.low-time {
+    color: #c0392b;
+    animation: pulse-red 0.8s ease-in-out infinite alternate;
+  }
+  @keyframes pulse-red {
+    from { opacity: 1; }
+    to { opacity: 0.5; }
+  }
+  .timer-display.stopped {
+    color: #aaa;
+  }
+  .timer-total {
+    font-size: 12px;
+    color: #aaa;
+    font-weight: 400;
+  }
+
+  /* ===== 回合记录 ===== */
+  .history-section {
+    flex: 1;
+    background: #f8f4ec;
+    border: 1px solid #e0d5c5;
+    border-radius: 6px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+  .history-section .section-title {
+    font-size: 13px;
+    color: #8a7a6a;
+    text-align: center;
+    letter-spacing: 4px;
+    margin-bottom: 6px;
+    flex-shrink: 0;
+  }
+  .history-list {
+    overflow-y: auto;
+    max-height: 220px;
+    font-size: 14px;
+    line-height: 1.8;
+    padding-right: 4px;
+  }
+  .history-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .history-list::-webkit-scrollbar-thumb {
+    background: #d0c8bc;
+    border-radius: 2px;
+  }
+  .history-item {
+    padding: 1px 6px;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.15s;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .history-item:hover {
+    background: #ede8de;
+  }
+  .history-item.active {
+    background: rgba(192,57,43,0.10);
+    color: #c0392b;
+  }
+  .history-item .move-num {
+    color: #aaa;
+    font-size: 12px;
+    min-width: 32px;
+    text-align: right;
+  }
+  .history-item .move-stone {
+    font-size: 12px;
+    min-width: 14px;
+    text-align: center;
+  }
+  .history-item .move-coord {
+    font-size: 13px;
+  }
+  .history-placeholder {
+    color: #bbb;
+    text-align: center;
+    font-size: 13px;
+    padding: 20px 0;
+  }
+
+  /* ===== 操作按钮 ===== */
+  .controls {
+    display: flex;
+    gap: 8px;
+  }
+  .btn {
+    flex: 1;
+    padding: 8px 0;
+    border: 1px solid #d0c0a8;
+    border-radius: 4px;
+    background: #f5f0e8;
+    color: #2c1810;
+    font-family: inherit;
+    font-size: 14px;
+    letter-spacing: 2px;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .btn:hover:not(:disabled) {
+    background: #e8dcc8;
+    border-color: #b0a090;
+  }
+  .btn:active:not(:disabled) {
+    transform: scale(0.97);
+  }
+  .btn:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
+  .btn-primary {
+    background: #c0392b;
+    border-color: #a03020;
+    color: #fff;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: #a03020;
+    border-color: #802010;
+  }
+
+  /* ===== 战绩统计 ===== */
+  .stats-section {
+    background: #f8f4ec;
+    border: 1px solid #e0d5c5;
+    border-radius: 6px;
+    padding: 10px 14px;
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    font-size: 14px;
+  }
+  .stats-section .stat-item {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+  }
+  .stats-section .stat-dot {
+    display: inline-block;
+    width: 12px; height: 12px;
+    border-radius: 50%;
+    border: 1px solid rgba(0,0,0,0.12);
+  }
+  .stats-section .stat-dot.black { background: radial-gradient(circle at 35% 35%, #555, #111); }
+  .stats-section .stat-dot.white { background: radial-gradient(circle at 35% 35%, #fff, #e8e8e8); }
+  .stats-section .stat-num {
+    font-weight: 500;
+    min-width: 16px;
+    text-align: center;
+  }
+
+  /* ===== 底部状态栏 ===== */
+  .status-bar {
+    margin-top: 14px;
+    padding: 8px 16px;
+    background: #f8f4ec;
+    border: 1px solid #e0d5c5;
+    border-radius: 6px;
+    text-align: center;
+    font-size: 16px;
+    letter-spacing: 2px;
+    min-height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+  }
+  .status-bar .status-stone {
+    display: inline-block;
+    width: 18px; height: 18px;
+    border-radius: 50%;
+    vertical-align: middle;
+    border: 1px solid rgba(0,0,0,0.12);
+  }
+  .status-bar .status-stone.black { background: radial-gradient(circle at 35% 35%, #555, #111 70%, #000); }
+  .status-bar .status-stone.white { background: radial-gradient(circle at 35% 35%, #fff, #e8e8e8 60%, #ccc); }
+  .status-bar.win {
+    background: #faf0e8;
+    border-color: #c0392b;
+    color: #c0392b;
+    font-weight: 500;
+  }
+  .status-bar.draw {
+    background: #f0ece4;
+    border-color: #8a7a6a;
+    color: #6a5a4a;
+  }
+
+  /* ===== 胜利高亮标记 ===== */
+  .win-indicator {
+    display: inline-block;
+    background: #c0392b;
+    color: #fff;
+    font-size: 11px;
+    padding: 0 6px;
+    border-radius: 3px;
+    margin-left: 4px;
+    letter-spacing: 1px;
+  }
+
+  /* ===== 响应式断点 ===== */
+  @media (max-width: 820px) {
+    .main-area {
+      flex-direction: column;
+      align-items: center;
+    }
+    .side-panel {
+      max-width: 100%;
+      width: 100%;
+      min-width: 0;
+    }
+    .history-list {
+      max-height: 150px;
+    }
+    .container {
+      padding: 16px;
+    }
+    .header h1 {
+      font-size: 26px;
+      letter-spacing: 8px;
+    }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+  <!-- 标题 -->
+  <div class="header">
+    <h1>五 子 棋</h1>
+    <div class="subtitle">— 古典棋韵 —</div>
+  </div>
+
+  <!-- 主区域 -->
+  <div class="main-area">
+
+    <!-- 棋盘 -->
+    <div class="board-wrapper">
+      <div class="board-inner">
+        <canvas id="boardCanvas"></canvas>
+      </div>
+    </div>
+
+    <!-- 侧边面板 -->
+    <div class="side-panel">
+
+      <!-- 计时器 -->
+      <div class="timer-section">
+        <div class="section-title">— 时 计 —</div>
+        <div id="blackTimer" class="timer-row active-turn">
+          <div class="timer-stone black"></div>
+          <span class="timer-label">黑方</span>
+          <span class="timer-display" id="blackTimeDisplay">15:00</span>
+        </div>
+        <div id="whiteTimer" class="timer-row">
+          <div class="timer-stone white"></div>
+          <span class="timer-label">白方</span>
+          <span class="timer-display" id="whiteTimeDisplay">15:00</span>
+        </div>
+      </div>
+
+      <!-- 回合记录 -->
+      <div class="history-section">
+        <div class="section-title">— 回合记录 —</div>
+        <div class="history-list" id="historyList">
+          <div class="history-placeholder">棋局尚未开始</div>
+        </div>
+      </div>
+
+      <!-- 操作按钮 -->
+      <div class="controls">
+        <button class="btn" id="undoBtn" disabled>悔 棋</button>
+        <button class="btn btn-primary" id="newGameBtn">新 局</button>
+      </div>
+
+      <!-- 战绩统计 -->
+      <div class="stats-section" id="statsSection">
+        <div class="stat-item">
+          <span class="stat-dot black"></span>
+          <span>黑胜</span>
+          <span class="stat-num" id="blackWins">0</span>
+        </div>
+        <div class="stat-item">
+          <span style="color:#aaa;">平</span>
+          <span class="stat-num" id="drawCount">0</span>
+        </div>
+        <div class="stat-item">
+          <span class="stat-dot white"></span>
+          <span>白胜</span>
+          <span class="stat-num" id="whiteWins">0</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 状态栏 -->
+  <div class="status-bar" id="statusBar">
+    <span class="status-stone black"></span> 黑方落子
+  </div>
+
+</div>
+
+<script>
+(function() {
+  'use strict';
+
+  // ============================================================
+  //  常量
+  // ============================================================
+  const BOARD_SIZE = 15;
+  const CELL_SIZE = 36;
+  const PADDING   = 30;
+  const STONE_RADIUS = CELL_SIZE * 0.44;
+  const TOTAL_TIME = 15 * 60; // 15 分钟（秒）
+
+  const EMPTY = 0, BLACK = 1, WHITE = 2;
+
+  // 星位（0-indexed）
+  const STAR_POINTS = [
+    [3,3], [3,7], [3,11],
+    [7,3], [7,7], [7,11],
+    [11,3],[11,7],[11,11]
+  ];
+
+  // DOM 缓存
+  const canvas   = document.getElementById('boardCanvas');
+  const ctx      = canvas.getContext('2d');
+  const blackTD  = document.getElementById('blackTimeDisplay');
+  const whiteTD  = document.getElementById('whiteTimeDisplay');
+  const histList = document.getElementById('historyList');
+  const undoBtn  = document.getElementById('undoBtn');
+  const newBtn   = document.getElementById('newGameBtn');
+  const statusEl = document.getElementById('statusBar');
+  const bwEl     = document.getElementById('blackWins');
+  const wwEl     = document.getElementById('whiteWins');
+  const dwEl     = document.getElementById('drawCount');
+  const blackTR  = document.getElementById('blackTimer');
+  const whiteTR  = document.getElementById('whiteTimer');
+
+  const canvasSize = PADDING * 2 + (BOARD_SIZE - 1) * CELL_SIZE;
+  canvas.width  = canvasSize;
+  canvas.height = canvasSize;
+
+  // ============================================================
+  //  游戏状态
+  // ============================================================
+  const state = {
+    board: [],          // 15×15, 0/1/2
+    current: BLACK,     // 当前走棋方
+    moves: [],          // [{ r, c, player }, ...]
+    gameOver: false,
+    winner: EMPTY,
+    winLine: [],        // 获胜五子坐标 [{r,c}, ...]
+    blackTime: TOTAL_TIME,
+    whiteTime: TOTAL_TIME,
+    timerActive: false,
+    timerId: null,
+    hoverPos: null,     // {r,c} 或 null
+    lastMove: null,     // {r,c} 或 null
+    selectedHist: -1,   // 回合记录选中下标
+    stats: { black: 0, white: 0, draw: 0 },
+  };
+
+  // ============================================================
+  //  初始化
+  // ============================================================
+  function init() {
+    loadStats();
+    resetBoard();
+    draw();
+    updateUI();
+  }
+
+  function resetBoard() {
+    state.board = Array.from({ length: BOARD_SIZE }, () => Array(BOARD_SIZE).fill(EMPTY));
+    state.current = BLACK;
+    state.moves = [];
+    state.gameOver = false;
+    state.winner = EMPTY;
+    state.winLine = [];
+    state.blackTime = TOTAL_TIME;
+    state.whiteTime = TOTAL_TIME;
+    state.lastMove = null;
+    state.selectedHist = -1;
+    state.hoverPos = null;
+    stopTimer();
+    state.timerActive = true;
+    startTimer();
+  }
+
+  // ============================================================
+  //  统计 — localStorage
+  // ============================================================
+  function loadStats() {
+    try {
+      const saved = localStorage.getItem('gomoku_stats_chinese');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        state.stats.black = parsed.black || 0;
+        state.stats.white = parsed.white || 0;
+        state.stats.draw  = parsed.draw  || 0;
+      }
+    } catch (_) { /* ignore */ }
+  }
+
+  function saveStats() {
+    try {
+      localStorage.setItem('gomoku_stats_chinese', JSON.stringify(state.stats));
+    } catch (_) { /* ignore */ }
+  }
+
+  // ============================================================
+  //  绘制
+  // ============================================================
+  function draw() {
+    ctx.clearRect(0, 0, canvasSize, canvasSize);
+    drawBoardBackground();
+    drawGrid();
+    drawStarPoints();
+    drawStones();
+    drawLastMoveMarker();
+    drawHoverStone();
+    drawWinHighlight();
+    drawHistoryMarker();
+  }
+
+  /** 棋盘背景 — 木纹色渐变 */
+  function drawBoardBackground() {
+    const gradient = ctx.createLinearGradient(0, 0, canvasSize, canvasSize);
+    gradient.addColorStop(0,   '#e8c87a');
+    gradient.addColorStop(0.3, '#dfc07a');
+    gradient.addColorStop(0.6, '#e5c572');
+    gradient.addColorStop(1,   '#dcb868');
+    ctx.fillStyle = gradient;
+    ctx.fillRect(0, 0, canvasSize, canvasSize);
+  }
+
+  /** 网格线 */
+  function drawGrid() {
+    ctx.strokeStyle = '#5a3a22';
+    ctx.lineWidth = 0.8;
+
+    for (let i = 0; i < BOARD_SIZE; i++) {
+      const pos = PADDING + i * CELL_SIZE;
+      // 横线
+      ctx.beginPath();
+      ctx.moveTo(PADDING, pos);
+      ctx.lineTo(PADDING + (BOARD_SIZE - 1) * CELL_SIZE, pos);
+      ctx.stroke();
+      // 竖线
+      ctx.beginPath();
+      ctx.moveTo(pos, PADDING);
+      ctx.lineTo(pos, PADDING + (BOARD_SIZE - 1) * CELL_SIZE);
+      ctx.stroke();
+    }
+  }
+
+  /** 星位（传统围棋星位，朱砂红） */
+  function drawStarPoints() {
+    ctx.fillStyle = '#c0392b';
+    for (const [r, c] of STAR_POINTS) {
+      const x = PADDING + c * CELL_SIZE;
+      const y = PADDING + r * CELL_SIZE;
+      ctx.beginPath();
+      ctx.arc(x, y, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+
+  /** 所有棋子 */
+  function drawStones() {
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (state.board[r][c] !== EMPTY) {
+          drawStone(r, c, state.board[r][c], 1);
+        }
+      }
+    }
+  }
+
+  /** 单个棋子 */
+  function drawStone(r, c, player, alpha) {
+    const x = PADDING + c * CELL_SIZE;
+    const y = PADDING + r * CELL_SIZE;
+    const radius = STONE_RADIUS;
+
+    ctx.save();
+    ctx.globalAlpha = alpha;
+
+    // 阴影
+    ctx.shadowColor = 'rgba(0,0,0,0.25)';
+    ctx.shadowBlur = 4;
+    ctx.shadowOffsetY = 2;
+
+    if (player === BLACK) {
+      const grad = ctx.createRadialGradient(x - radius * 0.3, y - radius * 0.3, 2, x, y, radius);
+      grad.addColorStop(0,   '#666');
+      grad.addColorStop(0.3, '#333');
+      grad.addColorStop(0.8, '#111');
+      grad.addColorStop(1,   '#000');
+      ctx.fillStyle = grad;
+    } else {
+      const grad = ctx.createRadialGradient(x - radius * 0.3, y - radius * 0.3, 2, x, y, radius);
+      grad.addColorStop(0,   '#ffffff');
+      grad.addColorStop(0.3, '#f5f5f5');
+      grad.addColorStop(0.8, '#e0e0e0');
+      grad.addColorStop(1,   '#c8c8c8');
+      ctx.fillStyle = grad;
+    }
+
+    ctx.beginPath();
+    ctx.arc(x, y, radius, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 白棋加边框
+    if (player === WHITE) {
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(0,0,0,0.15)';
+      ctx.lineWidth = 0.8;
+      ctx.stroke();
+    }
+
+    ctx.restore();
+  }
+
+  /** 上一步标记 — 小朱砂红点 */
+  function drawLastMoveMarker() {
+    if (!state.lastMove) return;
+    const { r, c } = state.lastMove;
+    if (state.board[r][c] === EMPTY) return;
+    const x = PADDING + c * CELL_SIZE;
+    const y = PADDING + r * CELL_SIZE;
+    ctx.fillStyle = '#c0392b';
+    ctx.beginPath();
+    ctx.arc(x, y, 3.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  /** 鼠标悬停预览 */
+  function drawHoverStone() {
+    if (!state.hoverPos) return;
+    if (state.gameOver) return;
+    const { r, c } = state.hoverPos;
+    if (state.board[r][c] !== EMPTY) return;
+    drawStone(r, c, state.current, 0.35);
+  }
+
+  /** 获胜五子高亮 — 朱砂红光圈 */
+  function drawWinHighlight() {
+    if (state.winLine.length === 0) return;
+    for (const { r, c } of state.winLine) {
+      const x = PADDING + c * CELL_SIZE;
+      const y = PADDING + r * CELL_SIZE;
+      ctx.save();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = '#c0392b';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(x, y, STONE_RADIUS + 3, 0, Math.PI * 2);
+      ctx.stroke();
+      // 外层光晕
+      ctx.strokeStyle = 'rgba(192,57,43,0.25)';
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(x, y, STONE_RADIUS + 5, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  /** 回合记录点击标记 — 淡红色小圈 */
+  function drawHistoryMarker() {
+    if (state.selectedHist < 0) return;
+    const move = state.moves[state.selectedHist];
+    if (!move) return;
+    const x = PADDING + move.c * CELL_SIZE;
+    const y = PADDING + move.r * CELL_SIZE;
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(192,57,43,0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([3, 3]);
+    ctx.beginPath();
+    ctx.arc(x, y, STONE_RADIUS + 6, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ============================================================
+  //  坐标转换
+  // ============================================================
+  function getNearestIntersection(mx, my) {
+    const col = Math.round((mx - PADDING) / CELL_SIZE);
+    const row = Math.round((my - PADDING) / CELL_SIZE);
+    if (row < 0 || row >= BOARD_SIZE || col < 0 || col >= BOARD_SIZE) return null;
+
+    // 距离检测
+    const ix = PADDING + col * CELL_SIZE;
+    const iy = PADDING + row * CELL_SIZE;
+    const dist = Math.hypot(mx - ix, my - iy);
+    if (dist > CELL_SIZE * 0.48) return null;
+
+    return { r: row, c: col };
+  }
+
+  // ============================================================
+  //  事件处理
+  // ============================================================
+  function getCanvasCoords(e) {
+    const rect = canvas.getBoundingClientRect();
+    const scaleX = canvas.width  / rect.width;
+    const scaleY = canvas.height / rect.height;
+    return {
+      mx: (e.clientX - rect.left) * scaleX,
+      my: (e.clientY - rect.top)  * scaleY
+    };
+  }
+
+  function onCanvasClick(e) {
+    if (state.gameOver) return;
+    const { mx, my } = getCanvasCoords(e);
+    const pos = getNearestIntersection(mx, my);
+    if (!pos) return;
+
+    const { r, c } = pos;
+    if (state.board[r][c] !== EMPTY) return;
+
+    placeStone(r, c);
+  }
+
+  function onCanvasMove(e) {
+    const { mx, my } = getCanvasCoords(e);
+    const pos = getNearestIntersection(mx, my);
+    state.hoverPos = pos;
+    draw();
+  }
+
+  function onCanvasLeave() {
+    state.hoverPos = null;
+    draw();
+  }
+
+  // ============================================================
+  //  核心游戏逻辑
+  // ============================================================
+  function placeStone(r, c) {
+    const player = state.current;
+
+    // 落子
+    state.board[r][c] = player;
+    state.moves.push({ r, c, player });
+    state.lastMove = { r, c };
+    state.selectedHist = -1;
+
+    // 检查胜负
+    const winResult = checkWin(r, c, player);
+    if (winResult) {
+      state.winLine = winResult;
+      state.gameOver = true;
+      state.winner = player;
+      state.stats[player === BLACK ? 'black' : 'white']++;
+      saveStats();
+      stopTimer();
+      state.timerActive = false;
+      draw();
+      updateUI();
+      return;
+    }
+
+    // 检查平局
+    if (state.moves.length >= BOARD_SIZE * BOARD_SIZE) {
+      state.gameOver = true;
+      state.winner = EMPTY;
+      state.stats.draw++;
+      saveStats();
+      stopTimer();
+      state.timerActive = false;
+      draw();
+      updateUI();
+      return;
+    }
+
+    // 换手
+    state.current = (player === BLACK) ? WHITE : BLACK;
+
+    // 切换计时（stop → start for next player）
+    restartTimer();
+
+    draw();
+    updateUI();
+  }
+
+  /** 四方向检测，返回获胜五子坐标数组或 null */
+  function checkWin(r, c, player) {
+    const directions = [[1,0], [0,1], [1,1], [1,-1]];
+
+    for (const [dr, dc] of directions) {
+      const line = [{ r, c }];
+
+      // 正方向
+      for (let step = 1; step < 5; step++) {
+        const nr = r + dr * step;
+        const nc = c + dc * step;
+        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
+        if (state.board[nr][nc] !== player) break;
+        line.push({ r: nr, c: nc });
+      }
+
+      // 负方向
+      for (let step = 1; step < 5; step++) {
+        const nr = r - dr * step;
+        const nc = c - dc * step;
+        if (nr < 0 || nr >= BOARD_SIZE || nc < 0 || nc >= BOARD_SIZE) break;
+        if (state.board[nr][nc] !== player) break;
+        line.push({ r: nr, c: nc });
+      }
+
+      if (line.length >= 5) return line;
+    }
+
+    return null;
+  }
+
+  /** 悔棋 */
+  function undoMove() {
+    if (state.gameOver) return;
+    if (state.moves.length === 0) return;
+
+    const last = state.moves.pop();
+    state.board[last.r][last.c] = EMPTY;
+    state.current = last.player;
+
+    // 上一步
+    if (state.moves.length > 0) {
+      const prev = state.moves[state.moves.length - 1];
+      state.lastMove = { r: prev.r, c: prev.c };
+    } else {
+      state.lastMove = null;
+    }
+
+    state.selectedHist = -1;
+    state.hoverPos = null;
+
+    // 计时不变，继续当前方计时
+    restartTimer();
+
+    draw();
+    updateUI();
+  }
+
+  /** 新一局 */
+  function newGame() {
+    resetBoard();
+    draw();
+    updateUI();
+  }
+
+  // ============================================================
+  //  计时器
+  // ============================================================
+  function startTimer() {
+    if (state.timerId) return;
+    if (!state.timerActive) return;
+    state.timerId = setInterval(tick, 1000);
+  }
+
+  function stopTimer() {
+    if (state.timerId) {
+      clearInterval(state.timerId);
+      state.timerId = null;
+    }
+  }
+
+  function restartTimer() {
+    stopTimer();
+    if (state.timerActive && !state.gameOver) {
+      startTimer();
+    }
+  }
+
+  function tick() {
+    if (state.gameOver) {
+      stopTimer();
+      return;
+    }
+
+    if (state.current === BLACK) {
+      state.blackTime--;
+      if (state.blackTime <= 0) {
+        state.blackTime = 0;
+        handleTimeout(BLACK);
+      }
+    } else {
+      state.whiteTime--;
+      if (state.whiteTime <= 0) {
+        state.whiteTime = 0;
+        handleTimeout(WHITE);
+      }
+    }
+
+    updateTimerDisplay();
+    draw();
+  }
+
+  /** 超时判负：timeoutPlayer 为超时方，另一方获胜 */
+  function handleTimeout(timeoutPlayer) {
+    stopTimer();
+    state.gameOver = true;
+    state.winner = (timeoutPlayer === BLACK) ? WHITE : BLACK;
+    state.stats[state.winner === BLACK ? 'black' : 'white']++;
+    saveStats();
+    draw();
+    updateUI();
+  }
+
+  function updateTimerDisplay() {
+    blackTD.textContent = formatTime(state.blackTime);
+    whiteTD.textContent = formatTime(state.whiteTime);
+
+    blackTD.classList.toggle('low-time', state.blackTime <= 60 && !state.gameOver && state.current === BLACK);
+    whiteTD.classList.toggle('low-time', state.whiteTime <= 60 && !state.gameOver && state.current === WHITE);
+
+    blackTR.classList.toggle('active-turn', state.current === BLACK && !state.gameOver);
+    whiteTR.classList.toggle('active-turn', state.current === WHITE && !state.gameOver);
+  }
+
+  function formatTime(secs) {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+
+  // ============================================================
+  //  UI 更新
+  // ============================================================
+  function updateUI() {
+    // 状态栏
+    if (state.gameOver) {
+      if (state.winner === BLACK) {
+        statusEl.className = 'status-bar win';
+        statusEl.innerHTML = '<span class="status-stone black"></span> 黑方胜！';
+      } else if (state.winner === WHITE) {
+        statusEl.className = 'status-bar win';
+        statusEl.innerHTML = '<span class="status-stone white"></span> 白方胜！';
+      } else {
+        statusEl.className = 'status-bar draw';
+        statusEl.innerHTML = '平 局';
+      }
+    } else {
+      statusEl.className = 'status-bar';
+      const stoneClass = state.current === BLACK ? 'black' : 'white';
+      const label = state.current === BLACK ? '黑方' : '白方';
+      statusEl.innerHTML = `<span class="status-stone ${stoneClass}"></span> ${label}落子`;
+    }
+
+    // 悔棋按钮
+    undoBtn.disabled = state.gameOver || state.moves.length === 0;
+
+    // 计时器
+    updateTimerDisplay();
+
+    // 回合记录
+    renderHistory();
+
+    // 统计
+    bwEl.textContent = state.stats.black;
+    wwEl.textContent = state.stats.white;
+    dwEl.textContent = state.stats.draw;
+  }
+
+  /** 渲染回合记录 */
+  function renderHistory() {
+    if (state.moves.length === 0) {
+      histList.innerHTML = '<div class="history-placeholder">棋局尚未开始</div>';
+      return;
+    }
+
+    let html = '';
+    for (let i = 0; i < state.moves.length; i++) {
+      const m = state.moves[i];
+      const stone = m.player === BLACK ? '●' : '○';
+      const coord = `(${m.r + 1}, ${m.c + 1})`;
+      const active = (i === state.selectedHist) ? ' active' : '';
+      html += `<div class="history-item${active}" data-index="${i}">
+        <span class="move-num">第${i + 1}手</span>
+        <span class="move-stone">${stone}</span>
+        <span class="move-coord">${coord}</span>
+      </div>`;
+    }
+    histList.innerHTML = html;
+
+    // 绑定点击事件
+    histList.querySelectorAll('.history-item').forEach(el => {
+      el.addEventListener('click', () => {
+        const idx = parseInt(el.dataset.index, 10);
+        if (state.selectedHist === idx) {
+          state.selectedHist = -1;
+        } else {
+          state.selectedHist = idx;
+        }
+        draw();
+        renderHistory();
+      });
+    });
+
+    // 自动滚动到最新
+    histList.scrollTop = histList.scrollHeight;
+  }
+
+  // ============================================================
+  //  事件绑定
+  // ============================================================
+  canvas.addEventListener('click', onCanvasClick);
+  canvas.addEventListener('mousemove', onCanvasMove);
+  canvas.addEventListener('mouseleave', onCanvasLeave);
+
+  undoBtn.addEventListener('click', undoMove);
+  newBtn.addEventListener('click', newGame);
+
+  // ============================================================
+  //  启动
+  // ============================================================
+  init();
+
+})();
+</script>
+</body>
+</html>
