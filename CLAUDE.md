@@ -10,59 +10,56 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```
 /
-├── project1/          ← 五子棋 v1（含 CLAUDE.md）
-│   ├── gomoku.html    ← 古典中国风五子棋（单文件应用）
-│   └── CLAUDE.md      ← 该项目的详细文档
-├── project2/          ← 五子棋 v2（迭代版本）
-│   ├── gomoku.html    ← 功能相同的五子棋游戏
+├── project1/          ← 红蓝对决 · 回合制战术对战
+│   ├── contactv1.html ← 战术对战游戏（Canvas，单文件）
 │   └── README.md      ← 项目说明
-└── CLAUDE.md          ← 本文件
+├── project2/          ← 五子棋 · 古典棋韵
+│   ├── gomoku.html    ← 古典中国风五子棋
+│   └── README.md      ← 项目说明
+├── CLAUDE.md          ← 本文件
+└── .gitignore
 ```
-
-两个项目均为 **五子棋 · 古典棋韵** — 基于纯 HTML/CSS/JavaScript 的古典中国风五子棋游戏，代码几乎一致但可能各有迭代。
 
 ## 开发方式
 
-- **编辑**：直接编辑对应项目的 `gomoku.html`，保存后刷新浏览器即可看到效果
-- **运行**：在浏览器中直接打开对应的 HTML 文件（无需服务器、无需构建）
-- **测试**：无测试框架，全部为手动测试
+- **编辑**：直接编辑对应项目的 HTML 文件，保存后刷新浏览器即可
+- **运行**：在浏览器中直接打开 HTML 文件（无需服务器、无需构建）
+- **测试**：全部为手动测试
 - **依赖**：零外部依赖
 
-## 功能特性（两个项目通用）
+## 项目简介
 
-| 功能 | 说明 |
-|------|------|
-| 15×15 标准棋盘 | Canvas 绘制，木纹背景，朱砂红星位 |
-| 胜负判定 | 横、竖、斜四方向检测五子连珠 |
-| 悔棋 | 撤销上一步落子，可连续悔棋 |
-| 计时器 | 每方 15 分钟倒计时，超时判负 |
-| 回合记录 | 右侧历史列表，点击可标记对应位置 |
-| 胜负统计 | localStorage 持久化（key: `gomoku_stats_chinese`） |
-| 古典中国风 | 宣纸色背景、木纹棋盘、毛笔书法字体、朱砂红点缀 |
+### project1 — 红蓝对决（回合制战术对战）
 
-## 代码架构（共通）
+基于 Canvas 的回合制对战游戏：
+- 红队（玩家）vs 蓝队（AI），可调人数（3-7）
+- 点击选中队员 → 鼠标瞄准 → 空格蓄力 → 发射
+- 子弹穿透敌人，队员移动到落点
+- 地图缩放（滚轮）、平移（拖拽）
+- 完整 UI：主菜单、暂停菜单、设置、统计数据、存档
+- localStorage 持久化统计/设置/存档
 
-每个 `gomoku.html` 均为单一 HTML 文件，结构如下：
+### project2 — 五子棋 · 古典棋韵
 
-- **CSS (~200 行)** — 古典中国风样式，含响应式断点（820px）
-- **JavaScript IIFE (~450 行)** — 自执行函数，无全局变量泄漏
-  - 核心状态对象 `state` 集中管理
-  - `draw()` 全量 Canvas 重绘管线
-  - `checkWin()` 四方向连珠检测
-  - `setInterval(1000)` 倒计时系统
-  - `localStorage` 持久化统计
-- **HTML (~30 行)** — 结构骨架
+古典中国风五子棋游戏：
+- 15×15 标准棋盘，Canvas 绘制
+- 双人轮流点击（人人对战）
+- 计时器、悔棋、回合记录、胜负统计
 
 ## 常用命令
 
 ```bash
-# 直接在浏览器中打开（Windows）
-start project1/gomoku.html
+# 打开对战游戏
+start project1/contactv1.html
+# 打开五子棋
 start project2/gomoku.html
 ```
 
-## 注意事项
+## 通用代码模式
 
-- Canvas 坐标转换使用 `getBoundingClientRect` + 缩放比，适配 HiDPI 屏幕
-- localStorage key 为 `gomoku_stats_chinese`，可手动清除重置统计
-- 两个项目使用相同的 localStorage key，共享胜负统计
+- **单文件应用**：所有代码在一个 HTML 中（CSS + HTML + JS）
+- **IIFE 封装**：`(function() { 'use strict'; ... })()` 零全局变量
+- **集中状态**：`const state = { ... }` 管理所有可变状态
+- **Canvas 渲染**：分层绘制管线，全量重绘
+- **事件驱动**：用户事件 → 状态变更 → 重绘
+- **坐标转换**：`getBoundingClientRect` + 缩放比适配 HiDPI

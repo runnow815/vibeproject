@@ -1,0 +1,1769 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>回合对战 · 红蓝对决</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #1a1a2e;
+    font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  }
+  canvas {
+    display: block;
+    width: 100%; height: 100%;
+    cursor: crosshair;
+  }
+</style>
+</head>
+<body>
+<canvas id="gameCanvas"></canvas>
+<script>
+(function() {
+  'use strict';
+
+  // ============================================================
+  //  DOM
+  // ============================================================
+  const canvas = document.getElementById('gameCanvas');
+  const ctx = canvas.getContext('2d');
+
+  // ============================================================
+  //  常量
+  // ============================================================
+  const PLAYERS_PER_TEAM = 5;
+  const PLAYER_RADIUS = 20;
+  const MAX_CHARGE = 100;
+  const CHARGE_SPEED = 1.2;          // 每帧蓄力增量（~83帧到满，约1.4秒@60fps）
+  const BULLET_BASE_SPEED = 16;      // 子弹基础速度
+  const MAX_ENERGY = 100;            // 最大能量
+  const ENERGY_DECAY = 2.5;          // 每帧能量衰减
+  const TEAM_COLORS = {
+    red:   { main: '#e74c3c', light: '#f1948a', dark: '#c0392b' },
+    blue:  { main: '#3498db', light: '#85c1e9', dark: '#2471a3' },
+  };
+  const FIELD_COLOR = '#2d5a27';
+  const FIELD_LINE_COLOR = '#3a7a33';
+
+  // ============================================================
+  //  状态
+  // ============================================================
+  const state = {
+    teams: { red: [], blue: [] },
+    currentTeam: 'red',
+    turnPhase: 'select',      // select | aim | charge | bullet | resolve | ai_select | ai_fire | gameover
+    selectedUnit: null,       // 队员引用
+    charge: 0,
+    charging: false,
+    bullet: null,             // { x, y, vx, vy, energy, startX, startY, angle, team, unitId }
+    deadTargets: [],          // [{ x, y, t }] 击杀特效
+    gameOver: false,
+    winner: null,
+    turnCount: 0,
+    mouseX: 0, mouseY: 0,
+    killCount: { red: 0, blue: 0 },
+    chargeDir: 1,             // 蓄力方向 1=增加 -1=减少
+    resizeTimer: null,
+    canvasW: 0, canvasH: 0,
+    aiTimer: null,            // AI 延迟计时器
+    camera: {
+      x: 0, y: 0,           // 平移偏移（像素）
+      zoom: 1,               // 缩放倍率
+      minZoom: 0.25,
+      maxZoom: 3,
+    },
+    dragging: false,          // 是否正在拖拽地图
+    dragStartX: 0, dragStartY: 0,
+    dragCamX: 0, dragCamY: 0,
+  };
+
+  // 世界坐标系尺寸
+  const WORLD_W = 1200;
+  const WORLD_H = 800;
+
+  // 地图定义
+  const MAPS = {
+    empty: {
+      name: '空地',
+      obstacles: [],
+    },
+    classic: {
+      name: '经典',
+      obstacles: [
+        { x: 500, y: 340, w: 200, h: 30 },
+        { x: 300, y: 200, w: 30, h: 150 },
+        { x: 870, y: 450, w: 30, h: 150 },
+      ],
+    },
+    maze: {
+      name: '迷宫',
+      obstacles: [
+        { x: 200, y: 200, w: 250, h: 20 },
+        { x: 200, y: 200, w: 20, h: 180 },
+        { x: 750, y: 400, w: 250, h: 20 },
+        { x: 980, y: 200, w: 20, h: 220 },
+        { x: 500, y: 550, w: 200, h: 20 },
+        { x: 400, y: 350, w: 20, h: 150 },
+        { x: 800, y: 100, w: 20, h: 120 },
+      ],
+    },
+    arena: {
+      name: '竞技场',
+      obstacles: [
+        { x: 350, y: 250, w: 100, h: 100 },
+        { x: 750, y: 250, w: 100, h: 100 },
+        { x: 550, y: 480, w: 100, h: 100 },
+        { x: 250, y: 550, w: 80, h: 20 },
+        { x: 870, y: 200, w: 80, h: 20 },
+      ],
+    },
+  };
+
+  // 按钮尺寸
+  const BTN_W = 240, BTN_H = 52, BTN_R = 10;
+
+  // 屏幕系统
+  let screen = 'menu'; // 'menu' | 'game' | 'settings' | 'statistics'
+  let paused = false;
+  let fromPause = false; // 是否从暂停菜单进入设置/统计
+  let hoveredBtn = null;
+  let settings = { teamSize: 5, chargeSpeed: 1.2, maxEnergy: 80, mapId: 'empty', gameMode: 'ai' };
+  let stats = { gamesPlayed: 0, wins: 0, losses: 0, totalKills: 0, totalDeaths: 0, totalTurns: 0 };
+
+  // 暂停菜单按钮定义
+  const pauseBtnDefs = [
+    { id: 'resume',    label: '继 续 游 戏' },
+    { id: 'statistics',label: '统 计 数 据' },
+    { id: 'settings',  label: '设 置' },
+    { id: 'exit_save', label: '退出并保存', color: '#555' },
+  ];
+  let pauseBtnPos = [];
+
+  // ============================================================
+  //  工具函数
+  // ============================================================
+  function rand(min, max) { return Math.random() * (max - min) + min; }
+  function clamp(v, mn, mx) { return Math.max(mn, Math.min(mx, v)); }
+
+  function dist(x1, y1, x2, y2) { return Math.hypot(x2 - x1, y2 - y1); }
+
+  /** 屏幕坐标 → 世界坐标 */
+  function screenToWorld(sx, sy) {
+    const c = state.camera;
+    return { x: (sx - c.x) / c.zoom, y: (sy - c.y) / c.zoom };
+  }
+
+  /** 在世界坐标系中渲染 */
+  function withCamera(fn) {
+    ctx.save();
+    const c = state.camera;
+    ctx.translate(c.x, c.y);
+    ctx.scale(c.zoom, c.zoom);
+    fn();
+    ctx.restore();
+  }
+
+  function pointInRect(px, py, r) { return px >= r.x && px <= r.x + r.w && py >= r.y && py <= r.y + r.h; }
+
+  /** 检测坐标是否在障碍物内 */
+  function hitObstacle(px, py) {
+    const obs = MAPS[settings.mapId].obstacles;
+    for (const o of obs) { if (pointInRect(px, py, o)) return true; }
+    return false;
+  }
+
+  /** 点 P 到线段 AB 的最短距离 */
+  function pointToSegmentDist(px, py, ax, ay, bx, by) {
+    const dx = bx - ax, dy = by - ay;
+    const lenSq = dx * dx + dy * dy;
+    if (lenSq === 0) return dist(px, py, ax, ay);
+    let t = ((px - ax) * dx + (py - ay) * dy) / lenSq;
+    t = Math.max(0, Math.min(1, t));
+    const nearX = ax + t * dx, nearY = ay + t * dy;
+    return dist(px, py, nearX, nearY);
+  }
+
+  // ============================================================
+  //  localStorage 持久化
+  // ============================================================
+  function loadData() {
+    try {
+      const s = localStorage.getItem('battle_stats');
+      if (s) { const p = JSON.parse(s); Object.assign(stats, p); }
+    } catch (_) {}
+    try {
+      const s = localStorage.getItem('battle_settings');
+      if (s) { const p = JSON.parse(s); Object.assign(settings, p); }
+    } catch (_) {}
+  }
+  function saveStats() {
+    try { localStorage.setItem('battle_stats', JSON.stringify(stats)); } catch (_) {}
+  }
+  function saveSettings() {
+    try { localStorage.setItem('battle_settings', JSON.stringify(settings)); } catch (_) {}
+  }
+
+  /** 保存游戏状态到 localStorage（多存档位） */
+  const MAX_SAVES = 10;
+
+  function saveGame() {
+    const snap = {
+      red: state.teams.red.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index })),
+      blue: state.teams.blue.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index })),
+      currentTeam: state.currentTeam,
+      turnCount: state.turnCount,
+      killCount: { red: state.killCount.red, blue: state.killCount.blue },
+      camera: { x: state.camera.x, y: state.camera.y, zoom: state.camera.zoom },
+      teamSize: settings.teamSize,
+      mapId: settings.mapId,
+      gameMode: settings.gameMode,
+      currentEnergy: settings.maxEnergy,
+      aliveRed: getAliveCount('red'),
+      aliveBlue: getAliveCount('blue'),
+      timestamp: Date.now(),
+    };
+    try {
+      const raw = localStorage.getItem('battle_saves');
+      const saves = raw ? JSON.parse(raw) : [];
+      saves.push(snap);
+      if (saves.length > MAX_SAVES) saves.splice(0, saves.length - MAX_SAVES);
+      localStorage.setItem('battle_saves', JSON.stringify(saves));
+    } catch (_) {}
+  }
+
+  /** 获取所有存档摘要列表 */
+  function listSaves() {
+    try {
+      const raw = localStorage.getItem('battle_saves');
+      if (!raw) return [];
+      const saves = JSON.parse(raw);
+      return saves.map((s, i) => ({
+        id: i,
+        timeNum: s.timestamp,
+        timestamp: new Date(s.timestamp).toLocaleString('zh-CN', { month:'2-digit', day:'2-digit', hour:'2-digit', minute:'2-digit' }),
+        turnCount: s.turnCount || 0,
+        aliveRed: s.aliveRed ?? s.red.filter(u => u.alive).length,
+        aliveBlue: s.aliveBlue ?? s.blue.filter(u => u.alive).length,
+        teamSize: s.teamSize || 5,
+        data: s,
+      }));
+    } catch (_) { return []; }
+  }
+
+  /** 从指定存档恢复 */
+  function loadGame(id) {
+    try {
+      const raw = localStorage.getItem('battle_saves');
+      if (!raw) return false;
+      const saves = JSON.parse(raw);
+      const snap = saves[id];
+      if (!snap) return false;
+
+      // 确保队伍数量和地图匹配
+      if (snap.teamSize && snap.teamSize !== settings.teamSize) {
+        settings.teamSize = snap.teamSize;
+        saveSettings();
+      }
+      if (snap.mapId && MAPS[snap.mapId]) {
+        settings.mapId = snap.mapId;
+        saveSettings();
+      }
+      if (snap.gameMode) {
+        settings.gameMode = snap.gameMode;
+        saveSettings();
+      }
+      // 重新生成队伍
+      initPlayers();
+      // 恢复状态
+      for (const u of snap.red) {
+        const t = state.teams.red.find(p => p.id === u.id);
+        if (t) { t.x = u.x; t.y = u.y; t.alive = u.alive; }
+      }
+      for (const u of snap.blue) {
+        const t = state.teams.blue.find(p => p.id === u.id);
+        if (t) { t.x = u.x; t.y = u.y; t.alive = u.alive; }
+      }
+      state.currentTeam = snap.currentTeam || 'red';
+      state.turnCount = snap.turnCount || 0;
+      state.killCount = snap.killCount || { red: 0, blue: 0 };
+      if (snap.camera) {
+        state.camera.x = snap.camera.x;
+        state.camera.y = snap.camera.y;
+        state.camera.zoom = snap.camera.zoom;
+      }
+      state.turnPhase = 'select';
+      state.selectedUnit = null;
+      state.gameOver = false;
+      state.winner = null;
+      state.charge = 0;
+      state.charging = false;
+      state.bullet = null;
+      state.deadTargets = [];
+      clearTimeout(state.aiTimer);
+      return true;
+    } catch (_) { return false; }
+  }
+
+  /** 是否有存档 */
+  function hasSave() {
+    try {
+      const raw = localStorage.getItem('battle_saves');
+      return raw && JSON.parse(raw).length > 0;
+    } catch (_) { return false; }
+  }
+
+  // ============================================================
+  //  初始化
+  // ============================================================
+  function resizeCanvas() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+    state.canvasW = canvas.width;
+    state.canvasH = canvas.height;
+  }
+
+  function initPlayers() {
+    state.teams.red  = [];
+    state.teams.blue = [];
+
+    const teamSize = settings.teamSize;
+    const margin = 60;
+    const allPositions = [];
+    for (let i = 0; i < teamSize * 2; i++) {
+      let tries = 0, x, y, ok;
+      do {
+        x = rand(margin, WORLD_W - margin);
+        y = rand(margin, WORLD_H - margin);
+        ok = true;
+        for (const p of allPositions) {
+          if (dist(x, y, p.x, p.y) < PLAYER_RADIUS * 3) { ok = false; break; }
+        }
+        tries++;
+      } while (!ok && tries < 30);
+      allPositions.push({ x, y });
+    }
+
+    for (let i = 0; i < teamSize; i++) {
+      state.teams.red.push({
+        id: `r${i}`, x: allPositions[i].x, y: allPositions[i].y,
+        alive: true, radius: PLAYER_RADIUS, index: i,
+      });
+      state.teams.blue.push({
+        id: `b${i}`,
+        x: allPositions[i + teamSize].x,
+        y: allPositions[i + teamSize].y,
+        alive: true, radius: PLAYER_RADIUS, index: i,
+      });
+    }
+  }
+
+  function resetGame() {
+    state.turnPhase = 'select';
+    state.selectedUnit = null;
+    state.charge = 0;
+    state.charging = false;
+    state.bullet = null;
+    state.gameOver = false;
+    state.winner = null;
+    state.turnCount = 0;
+    state.killCount = { red: 0, blue: 0 };
+    state.deadTargets = [];
+    state.currentTeam = 'red';
+    clearTimeout(state.aiTimer);
+    state.camera.x = (canvas.width - WORLD_W * state.camera.zoom) / 2;
+    state.camera.y = (canvas.height - WORLD_H * state.camera.zoom) / 2;
+    initPlayers();
+  }
+
+  function startGame() {
+    screen = 'game';
+    paused = false;
+    fromPause = false;
+    state.chargeDir = 1;
+    resetGame();
+  }
+
+  function init() {
+    loadData();
+    resizeCanvas();
+    screen = 'menu';
+    draw();
+    window.addEventListener('resize', () => {
+      clearTimeout(state.resizeTimer);
+      state.resizeTimer = setTimeout(resizeCanvas, 100);
+    });
+  }
+
+  // ============================================================
+  //  选择存活队员
+  // ============================================================
+  function getAlive(team) { return team.filter(u => u.alive); }
+
+  function getAliveCount(teamColor) {
+    return state.teams[teamColor].filter(u => u.alive).length;
+  }
+
+  // ============================================================
+  //  子弹发射
+  // ============================================================
+  function fireBullet(unit, angle, charge) {
+    const speed = BULLET_BASE_SPEED * (charge / MAX_CHARGE);
+    const energy = settings.maxEnergy * (charge / MAX_CHARGE);
+    state.bullet = {
+      x: unit.x,
+      y: unit.y,
+      startX: unit.x,
+      startY: unit.y,
+      vx: Math.cos(angle) * speed,
+      vy: Math.sin(angle) * speed,
+      prevX: unit.x,
+      prevY: unit.y,
+      energy: energy,
+      angle: angle,
+      team: state.currentTeam,
+      unitId: unit.id,
+      done: false,
+    };
+    state.turnPhase = 'bullet';
+  }
+
+  // ============================================================
+  //  碰撞检测：线段 vs 圆
+  // ============================================================
+  function checkBulletCollisions(bullet, enemyTeam) {
+    const hits = [];
+    for (const u of enemyTeam) {
+      if (!u.alive) continue;
+      const d = pointToSegmentDist(u.x, u.y, bullet.prevX, bullet.prevY, bullet.x, bullet.y);
+      if (d < u.radius + 4) {
+        hits.push(u);
+      }
+    }
+    return hits;
+  }
+
+  // ============================================================
+  //  回合结算
+  // ============================================================
+  function resolveTurn(bullet) {
+    // 移动队员到子弹落点（限制在世界内）
+    const team = state.teams[bullet.team];
+    const unit = team.find(u => u.id === bullet.unitId);
+    if (unit && unit.alive) {
+      const margin = PLAYER_RADIUS + 5;
+      unit.x = clamp(bullet.x, margin, WORLD_W - margin);
+      unit.y = clamp(bullet.y, margin, WORLD_H - margin);
+    }
+
+    state.bullet = null;
+
+    // 检测胜利
+    const enemyTeam = bullet.team === 'red' ? 'blue' : 'red';
+    if (getAliveCount(enemyTeam) === 0) {
+      state.gameOver = true;
+      state.winner = bullet.team;
+      state.turnPhase = 'gameover';
+      // 记录统计
+      stats.gamesPlayed++;
+      if (bullet.team === 'red') stats.wins++; else stats.losses++;
+      stats.totalKills += state.killCount.red;
+      stats.totalDeaths += state.killCount.blue;
+      stats.totalTurns += state.turnCount;
+      saveStats();
+      return;
+    }
+
+    state.turnCount++;
+
+    // 切换回合
+    if (settings.gameMode === 'pvp') {
+      // PvP: 交换双方
+      state.currentTeam = bullet.team === 'red' ? 'blue' : 'red';
+      state.turnPhase = 'select';
+      state.selectedUnit = null;
+    } else {
+      // PvAI
+      if (bullet.team === 'red') {
+        startAITurn();
+      } else {
+        state.currentTeam = 'red';
+        state.turnPhase = 'select';
+        state.selectedUnit = null;
+      }
+    }
+  }
+
+  // ============================================================
+  //  AI 逻辑
+  // ============================================================
+  function startAITurn() {
+    state.currentTeam = 'blue';
+    state.turnPhase = 'ai_select';
+
+    const alive = getAlive(state.teams.blue);
+    if (alive.length === 0) {
+      state.gameOver = true;
+      state.winner = 'red';
+      state.turnPhase = 'gameover';
+      stats.gamesPlayed++; stats.wins++; stats.totalTurns += state.turnCount; saveStats();
+      return;
+    }
+
+    // 1. 选一个存活队员
+    const unit = alive[Math.floor(Math.random() * alive.length)];
+    state.selectedUnit = unit;
+
+    // 2. 找最近的敌人
+    const enemies = getAlive(state.teams.red);
+    if (enemies.length === 0) {
+      state.gameOver = true;
+      state.winner = 'blue';
+      state.turnPhase = 'gameover';
+      stats.gamesPlayed++; stats.losses++; stats.totalTurns += state.turnCount; saveStats();
+      return;
+    }
+
+    let target = enemies[0];
+    let minDist = dist(unit.x, unit.y, target.x, target.y);
+    for (const e of enemies) {
+      const d = dist(unit.x, unit.y, e.x, e.y);
+      if (d < minDist) { minDist = d; target = e; }
+    }
+
+    // 3. 方向（加随机偏移 ±20°）
+    const baseAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    const angle = baseAngle + rand(-0.35, 0.35);
+
+    // 4. 随机蓄力 30%-90%
+    const charge = rand(30, 90);
+
+    // 短暂延迟后发射
+    state.aiTimer = setTimeout(() => {
+      if (state.gameOver) return;
+      // 更新鼠标位置到瞄准方向（用于渲染瞄准线）
+      state.mouseX = unit.x + Math.cos(angle) * 500;
+      state.mouseY = unit.y + Math.sin(angle) * 500;
+
+      state.turnPhase = 'aim';
+      state.charge = charge;
+
+      // 再延迟后发射
+      state.aiTimer = setTimeout(() => {
+        if (state.gameOver) return;
+        state.turnPhase = 'ai_fire';
+        fireBullet(unit, angle, charge);
+      }, 300);
+    }, 400);
+  }
+
+  // ============================================================
+  //  输入处理
+  // ============================================================
+  const mouse = { screenX: 0, screenY: 0, worldX: 0, worldY: 0 };
+
+  function updateMouseCoords(sx, sy) {
+    mouse.screenX = sx;
+    mouse.screenY = sy;
+    const w = screenToWorld(sx, sy);
+    mouse.worldX = w.x;
+    mouse.worldY = w.y;
+    state.mouseX = mouse.worldX;
+    state.mouseY = mouse.worldY;
+  }
+
+  /** 判断点是否在按钮内 */
+  function hitBtn(b, mx, my) { return mx >= b.x && mx <= b.x + b.w && my >= b.y && my <= b.y + b.h; }
+
+  /** 处理菜单/设置/统计的按钮交互 */
+  function handleMenuClick(mx, my) {
+    for (const b of menuBtns) {
+      if (!hitBtn(b, mx, my)) continue;
+      switch (b.id) {
+        case 'start_ai': settings.gameMode = 'ai'; saveSettings(); startGame(); return;
+        case 'start_pvp': settings.gameMode = 'pvp'; saveSettings(); startGame(); return;
+        case 'load': screen = 'load'; return;
+        case 'load_back': screen = 'menu'; return;
+        case 'settings': screen = 'settings'; return;
+        case 'statistics': screen = 'statistics'; return;
+        case 'back':
+          if (fromPause) {
+            fromPause = false;
+            screen = 'game';
+            paused = true;
+          } else {
+            screen = 'menu';
+          }
+          return;
+        case 'reset_stats':
+          stats = { gamesPlayed: 0, wins: 0, losses: 0, totalKills: 0, totalDeaths: 0, totalTurns: 0 };
+          saveStats();
+          return;
+        default:
+          // settings +/- buttons
+          if (b.id.startsWith('inc_') || b.id.startsWith('dec_')) {
+            const key = b.id.slice(4);
+            const dir = b.id.startsWith('inc_') ? 1 : -1;
+            if (key === 'teamSize') {
+              settings.teamSize = clamp(settings.teamSize + dir, 3, 7);
+            } else if (key === 'chargeSpeed') {
+              settings.chargeSpeed = clamp(Math.round((settings.chargeSpeed + dir * 0.1) * 10) / 10, 0.5, 2.0);
+            } else if (key === 'maxEnergy') {
+              settings.maxEnergy = clamp(settings.maxEnergy + dir * 5, 50, 150);
+            }
+            saveSettings();
+            return;
+          }
+          // 地图切换
+          if (b.id === 'prev_mapId' || b.id === 'next_mapId') {
+            const mapKeys = Object.keys(MAPS);
+            const idx = mapKeys.indexOf(settings.mapId);
+            settings.mapId = mapKeys[(idx + (b.id === 'next_mapId' ? 1 : -1) + mapKeys.length) % mapKeys.length];
+            saveSettings();
+            return;
+          }
+          // 读取存档
+          if (b.id.startsWith('slot_')) {
+            const idx = parseInt(b.id.slice(5), 10);
+            if (loadGame(idx)) {
+              screen = 'game';
+              paused = false;
+            }
+            return;
+          }
+      }
+    }
+  }
+
+  function handleMenuHover(mx, my) {
+    hoveredBtn = null;
+    for (const b of menuBtns) {
+      if (hitBtn(b, mx, my)) { hoveredBtn = b.id; return; }
+    }
+  }
+
+  // ---- 鼠标移动 ----
+  canvas.addEventListener('mousemove', e => {
+    updateMouseCoords(e.clientX, e.clientY);
+
+    if (screen === 'game' && paused) {
+      handlePauseHover(e.clientX, e.clientY);
+    } else if (screen === 'game') {
+      hoveredBtn = null;
+      if (state.dragging) {
+        const c = state.camera;
+        c.x = state.dragCamX + (e.clientX - state.dragStartX);
+        c.y = state.dragCamY + (e.clientY - state.dragStartY);
+      }
+    } else {
+      handleMenuHover(e.clientX, e.clientY);
+    }
+  });
+
+  // ---- 鼠标按下 ----
+  canvas.addEventListener('mousedown', e => {
+    if (screen !== 'game') {
+      if (e.button === 0) handleMenuClick(e.clientX, e.clientY);
+      return;
+    }
+
+    // === game screen ===
+    // 暂停中 → 处理暂停菜单
+    if (paused) {
+      if (e.button === 0) handlePauseClick(e.clientX, e.clientY);
+      return;
+    }
+
+    // 中键/右键拖拽
+    if (e.button === 1 || e.button === 2) {
+      state.dragging = true;
+      state.dragStartX = e.clientX;
+      state.dragStartY = e.clientY;
+      state.dragCamX = state.camera.x;
+      state.dragCamY = state.camera.y;
+      e.preventDefault();
+      return;
+    }
+    // 左键
+    if (e.button === 0 && !state.gameOver) {
+      const w = screenToWorld(e.clientX, e.clientY);
+      // 检测点击到当前回合方的存活队员
+      const currentTeamArr = state.teams[state.currentTeam];
+      let hitUnit = null;
+      for (const u of currentTeamArr) {
+        if (!u.alive) continue;
+        if (dist(w.x, w.y, u.x, u.y) <= u.radius) { hitUnit = u; break; }
+      }
+      if (hitUnit && !state.charging) {
+        state.selectedUnit = hitUnit;
+        state.turnPhase = 'aim';
+        state.charge = 0;
+        state.charging = false;
+        return;
+      }
+      // 点击空地开始拖拽
+      state.dragging = true;
+      state.dragStartX = e.clientX;
+      state.dragStartY = e.clientY;
+      state.dragCamX = state.camera.x;
+      state.dragCamY = state.camera.y;
+    }
+    // 游戏结束点击
+    if (e.button === 0 && state.gameOver) {
+      handleGameOverClick(e.clientX, e.clientY);
+    }
+    // 点击退出按钮
+    let isExit = false;
+    if (e.button === 0) {
+      const W = state.canvasW;
+      const exitBtn = { x: W - 70, y: 16, w: 54, h: 30 };
+      if (hitBtn(exitBtn, e.clientX, e.clientY)) {
+        isExit = true;
+      }
+    }
+    if (isExit) {
+      clearTimeout(state.aiTimer);
+      screen = 'menu';
+    }
+  });
+
+  function handleGameOverClick(mx, my) {
+    const W = state.canvasW, H = state.canvasH;
+    const btnW = 180, btnH = 44;
+    const cx = W / 2;
+    const y1 = H / 2 + 60;
+    const y2 = y1 + 56;
+    if (mx >= cx - btnW / 2 && mx <= cx + btnW / 2 && my >= y1 - btnH / 2 && my <= y1 + btnH / 2) {
+      // 再来一局
+      screen = 'game';
+      resetGame();
+    }
+    if (mx >= cx - btnW / 2 && mx <= cx + btnW / 2 && my >= y2 - btnH / 2 && my <= y2 + btnH / 2) {
+      screen = 'menu';
+    }
+  }
+
+  /** 暂停菜单点击 */
+  function handlePauseClick(mx, my) {
+    const W = state.canvasW, H = state.canvasH;
+    const bw = 200, bh = 46, gap = 14, cols = 2;
+    const totalW = cols * bw + (cols - 1) * gap;
+    const totalH = Math.ceil(pauseBtnDefs.length / cols) * bh + (Math.ceil(pauseBtnDefs.length / cols) - 1) * gap;
+    const startX = (W - totalW) / 2, startY = (H - totalH) / 2 + 10;
+
+    for (let i = 0; i < pauseBtnDefs.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const bx = startX + col * (bw + gap), by = startY + row * (bh + gap);
+      if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+        const id = pauseBtnDefs[i].id;
+        switch (id) {
+          case 'resume': paused = false; hoveredBtn = null; return;
+          case 'statistics':
+            fromPause = true;
+            screen = 'statistics';
+            return;
+          case 'settings':
+            fromPause = true;
+            screen = 'settings';
+            return;
+          case 'exit_save':
+            saveGame();
+            clearTimeout(state.aiTimer);
+            paused = false;
+            screen = 'menu';
+            return;
+        }
+      }
+    }
+  }
+
+  /** 暂停菜单悬停 */
+  function handlePauseHover(mx, my) {
+    hoveredBtn = null;
+    const W = state.canvasW, H = state.canvasH;
+    const bw = 200, bh = 46, gap = 14, cols = 2;
+    const totalW = cols * bw + (cols - 1) * gap;
+    const totalH = Math.ceil(pauseBtnDefs.length / cols) * bh + (Math.ceil(pauseBtnDefs.length / cols) - 1) * gap;
+    const startX = (W - totalW) / 2, startY = (H - totalH) / 2 + 10;
+    for (let i = 0; i < pauseBtnDefs.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const bx = startX + col * (bw + gap), by = startY + row * (bh + gap);
+      if (mx >= bx && mx <= bx + bw && my >= by && my <= by + bh) {
+        hoveredBtn = 'pause_' + pauseBtnDefs[i].id;
+        return;
+      }
+    }
+  }
+
+  // ---- 鼠标释放 ----
+  canvas.addEventListener('mouseup', e => {
+    if (state.dragging) { state.dragging = false; }
+  });
+
+  canvas.addEventListener('mouseleave', () => {
+    state.dragging = false;
+    if (screen !== 'game') hoveredBtn = null;
+  });
+
+  canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+  // ---- 滚轮缩放（仅游戏画面） ----
+  canvas.addEventListener('wheel', e => {
+    if (screen !== 'game') return;
+    e.preventDefault();
+    const c = state.camera;
+    const oldZoom = c.zoom;
+    const factor = e.deltaY > 0 ? 0.9 : 1.1;
+    c.zoom = clamp(c.zoom * factor, c.minZoom, c.maxZoom);
+    const mx = e.clientX, my = e.clientY;
+    c.x = mx - (mx - c.x) * (c.zoom / oldZoom);
+    c.y = my - (my - c.y) * (c.zoom / oldZoom);
+  }, { passive: false });
+
+  // ---- 键盘 ----
+  document.addEventListener('keydown', e => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (screen !== 'game') return;
+      if (state.gameOver) { screen = 'menu'; return; }
+      // PvP: 双方都可操作；PvAI: 仅红方
+      if (settings.gameMode === 'ai' && state.currentTeam !== 'red') return;
+      if (state.turnPhase === 'aim' && state.selectedUnit && !state.charging) {
+        state.charging = true;
+        state.turnPhase = 'charge';
+      }
+    }
+    if (e.code === 'Escape') {
+      if (screen === 'game') {
+        if (state.gameOver) { screen = 'menu'; return; }
+        paused = !paused;
+        if (!paused) { hoveredBtn = null; }
+        return;
+      }
+      if (screen === 'load') { screen = 'menu'; return; }
+      if (screen === 'settings' || screen === 'statistics') {
+        if (fromPause) {
+          fromPause = false;
+          screen = 'game';
+          paused = true;
+        } else {
+          screen = 'menu';
+        }
+        return;
+      }
+    }
+    if (e.code === 'KeyR' && state.gameOver) { screen = 'game'; resetGame(); }
+  });
+
+  document.addEventListener('keyup', e => {
+    if (e.code === 'Space') {
+      e.preventDefault();
+      if (screen !== 'game') return;
+      if (settings.gameMode === 'ai' && state.currentTeam !== 'red') return;
+      if ((state.turnPhase === 'charge' || state.turnPhase === 'aim') && state.charging && state.selectedUnit) {
+        state.charging = false;
+        const angle = Math.atan2(mouse.worldY - state.selectedUnit.y, mouse.worldX - state.selectedUnit.x);
+        fireBullet(state.selectedUnit, angle, state.charge);
+        state.charge = 0;
+      }
+    }
+  });
+
+  // ============================================================
+  //  渲染 — 屏幕分发
+  // ============================================================
+  function draw() {
+    const W = state.canvasW || canvas.width;
+    const H = state.canvasH || canvas.height;
+
+    if (screen === 'menu') return drawMenu(W, H);
+    if (screen === 'load') return drawLoadScreen(W, H);
+    if (screen === 'settings') return drawSettings(W, H);
+    if (screen === 'statistics') return drawStatistics(W, H);
+
+    // ---- game 画面 ----
+    // 背景
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, W, H);
+
+    // 游戏对象（受摄像机变换）
+    withCamera(() => {
+      drawField();
+      drawObstacles();
+      drawUnits();
+      drawSelectionRing();
+      drawAimLine();
+      drawBullet();
+      drawKillEffects();
+    });
+
+    // UI（屏幕坐标）
+    drawUI(W, H);
+
+    // 游戏结束
+    if (state.gameOver) drawGameOverScreen(W, H);
+
+    // 暂停菜单
+    if (paused && !state.gameOver) drawPauseMenu(W, H);
+  }
+
+  // ---------- 通用按钮 ----------
+  let menuBtns = [];
+
+  function defineBtns(btns) { menuBtns = btns; }
+
+  function drawButton(label, x, y, w, h, id, color) {
+    const hovered = hoveredBtn === id;
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = hovered ? (color || '#e74c3c') : (color ? darken(color) : 'rgba(255,255,255,0.12)');
+    ctx.beginPath();
+    ctx.roundRect(x, y, w, h, BTN_R);
+    ctx.fill();
+    if (hovered) {
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+    ctx.fillStyle = hovered ? '#fff' : 'rgba(255,255,255,0.8)';
+    ctx.font = 'bold 18px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, x + w / 2, y + h / 2);
+    ctx.restore();
+  }
+  function darken(c) {
+    // Simple darken for non-hover state
+    return 'rgba(255,255,255,0.08)';
+  }
+
+  // ---------- 主菜单 ----------
+  function drawMenu(W, H) {
+    // 背景
+    const grad = ctx.createRadialGradient(W / 2, H / 2, 100, W / 2, H / 2, Math.max(W, H) * 0.7);
+    grad.addColorStop(0, '#1a1a3e');
+    grad.addColorStop(1, '#0a0a1a');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, W, H);
+
+    // 装饰场地（淡化的世界地图）
+    ctx.save();
+    ctx.globalAlpha = 0.06;
+    ctx.fillStyle = FIELD_COLOR;
+    const scale = Math.min(W, H) / Math.max(WORLD_W, WORLD_H) * 0.6;
+    const ox = (W - WORLD_W * scale) / 2, oy = (H - WORLD_H * scale) / 2 - 60;
+    ctx.translate(ox, oy);
+    ctx.scale(scale, scale);
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(0, 0, WORLD_W, WORLD_H);
+    ctx.beginPath(); ctx.arc(WORLD_W / 2, WORLD_H / 2, 80, 0, Math.PI * 2); ctx.stroke();
+    ctx.beginPath(); ctx.moveTo(WORLD_W / 2, 0); ctx.lineTo(WORLD_W / 2, WORLD_H); ctx.stroke();
+    ctx.restore();
+
+    // 标题
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#e74c3c';
+    ctx.font = 'bold 52px "Segoe UI", sans-serif';
+    ctx.fillText('⚔ 红 蓝 对 决', W / 2, H * 0.22);
+    ctx.fillStyle = 'rgba(255,255,255,0.35)';
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText('回合制战术对战', W / 2, H * 0.22 + 40);
+    ctx.restore();
+
+    // 按钮
+    const btnY = H * 0.38;
+    const gap = 60;
+    const btns = [
+      { id: 'start_ai', label: '人 机 对 战', x: (W - BTN_W) / 2, y: btnY, w: BTN_W, h: BTN_H, color: '#c0392b' },
+      { id: 'start_pvp', label: '双 人 对 战', x: (W - BTN_W) / 2, y: btnY + gap, w: BTN_W, h: BTN_H },
+    ];
+    if (hasSave()) {
+      btns.push({ id: 'load', label: '读 取 游 戏', x: (W - BTN_W) / 2, y: btnY + gap * 2, w: BTN_W, h: BTN_H });
+      btns.push({ id: 'settings', label: '设 置', x: (W - BTN_W) / 2, y: btnY + gap * 3, w: BTN_W, h: BTN_H });
+      btns.push({ id: 'statistics', label: '统 计 数 据', x: (W - BTN_W) / 2, y: btnY + gap * 4, w: BTN_W, h: BTN_H });
+    } else {
+      btns.push(
+        { id: 'settings', label: '设 置', x: (W - BTN_W) / 2, y: btnY + gap * 2, w: BTN_W, h: BTN_H },
+        { id: 'statistics', label: '统 计 数 据', x: (W - BTN_W) / 2, y: btnY + gap * 3, w: BTN_W, h: BTN_H },
+      );
+    }
+    defineBtns(btns);
+    for (const b of menuBtns) {
+      drawButton(b.label, b.x, b.y, b.w, b.h, b.id, b.color);
+    }
+
+    // 版本
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText('v1.0', W / 2, H - 16);
+  }
+
+  // ---------- 存档列表 ----------
+  function drawLoadScreen(W, H) {
+    ctx.fillStyle = '#0d0d24';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px "Segoe UI", sans-serif';
+    ctx.fillText('📂 读取存档', W / 2, 50);
+
+    const saves = listSaves();
+    const buttons = [];
+    const itemH = 64;
+    const startY = 90;
+    const maxVisible = Math.min(saves.length, 7);
+    const listH = maxVisible * itemH + 10;
+
+    // 背景框
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.beginPath();
+    ctx.roundRect(W / 2 - 260, startY - 10, 520, listH, 8);
+    ctx.fill();
+
+    for (let i = 0; i < maxVisible; i++) {
+      const s = saves[i];
+      const y = startY + i * itemH;
+      const hovered = hoveredBtn === `slot_${s.id}`;
+
+      // 行背景
+      ctx.fillStyle = hovered ? 'rgba(255,255,255,0.1)' : 'transparent';
+      ctx.beginPath();
+      ctx.roundRect(W / 2 - 250, y, 500, 56, 6);
+      ctx.fill();
+
+      // 行内容
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'middle';
+
+      // 时间
+      ctx.fillStyle = hovered ? '#fff' : 'rgba(255,255,255,0.7)';
+      ctx.font = '15px "Segoe UI", sans-serif';
+      ctx.fillText(`🕒 ${s.timestamp}`, W / 2 - 235, y + 18);
+
+      // 存活信息
+      ctx.fillStyle = hovered ? 'rgba(255,255,255,0.6)' : 'rgba(255,255,255,0.4)';
+      ctx.font = '13px "Segoe UI", sans-serif';
+      ctx.fillText(`回合 ${s.turnCount}  ·  🔴${s.aliveRed}/${s.teamSize}  🔵${s.aliveBlue}/${s.teamSize}`, W / 2 - 235, y + 42);
+
+      buttons.push({ id: `slot_${s.id}`, label: '', x: W / 2 - 250, y, w: 500, h: 56 });
+    }
+
+    // 无存档
+    if (saves.length === 0) {
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(255,255,255,0.3)';
+      ctx.font = '18px "Segoe UI", sans-serif';
+      ctx.fillText('暂无存档', W / 2, startY + 40);
+    }
+
+    // 返回按钮
+    const backY = startY + listH + 30;
+    buttons.push({ id: 'load_back', label: '返  回', x: (W - 160) / 2, y: backY, w: 160, h: 44 });
+    defineBtns(buttons);
+    for (const b of buttons) {
+      if (b.label) drawButton(b.label, b.x, b.y, b.w, b.h, b.id);
+    }
+    ctx.restore();
+  }
+
+  // ---------- 设置页面 ----------
+  function drawSettings(W, H) {
+    ctx.fillStyle = '#0d0d24';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 32px "Segoe UI", sans-serif';
+    ctx.fillText('⚙ 设置', W / 2, 60);
+
+    // 地图列表
+    const mapKeys = Object.keys(MAPS);
+    const curMapIdx = mapKeys.indexOf(settings.mapId);
+
+    // 设置项
+    const items = [
+      { label: '队伍人数', key: 'teamSize', val: settings.teamSize, min: 3, max: 7, step: 1, fmt: v => v },
+      { label: '蓄力速度', key: 'chargeSpeed', val: settings.chargeSpeed, min: 0.5, max: 2.0, step: 0.1, fmt: v => v.toFixed(1) },
+      { label: '最大距离', key: 'maxEnergy', val: settings.maxEnergy, min: 50, max: 150, step: 5, fmt: v => `${v}%` },
+      { label: '地图', key: 'mapId', val: MAPS[settings.mapId].name, custom: true, fmt: v => v, clickPrev: () => {
+        const idx = (mapKeys.indexOf(settings.mapId) - 1 + mapKeys.length) % mapKeys.length;
+        settings.mapId = mapKeys[idx]; saveSettings();
+      }, clickNext: () => {
+        const idx = (mapKeys.indexOf(settings.mapId) + 1) % mapKeys.length;
+        settings.mapId = mapKeys[idx]; saveSettings();
+      }},
+    ];
+    const startY = 120;
+    const rowH = 62;
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const y = startY + i * rowH;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = 'rgba(255,255,255,0.7)';
+      ctx.font = '18px "Segoe UI", sans-serif';
+      ctx.fillText(item.label, W / 2 - 180, y);
+
+      ctx.textAlign = 'center';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 22px "Segoe UI", sans-serif';
+      ctx.fillText(item.fmt(item.val), W / 2 + 20, y);
+
+      if (item.custom) {
+        // 地图切换用 ◀ ▶
+        const btnW = 36, btnH = 36;
+        drawButton('◀', W / 2 + 90, y - btnH / 2, btnW, btnH, `prev_${item.key}`);
+        drawButton('▶', W / 2 + 140, y - btnH / 2, btnW, btnH, `next_${item.key}`);
+      } else {
+        // - + 按钮
+        const btnW = 36, btnH = 36;
+        drawButton('−', W / 2 + 90, y - btnH / 2, btnW, btnH, `dec_${item.key}`);
+        drawButton('+', W / 2 + 140, y - btnH / 2, btnW, btnH, `inc_${item.key}`);
+      }
+    }
+
+    // 重置统计数据
+    const rstY = startY + items.length * rowH + 20;
+    drawButton('重置统计数据', (W - BTN_W) / 2, rstY, BTN_W, BTN_H, 'reset_stats', '#555');
+
+    // 返回按钮
+    drawButton('返  回', (W - 160) / 2, rstY + 70, 160, 44, 'back');
+    ctx.restore();
+  }
+
+  // ---------- 统计数据 ----------
+  function drawStatistics(W, H) {
+    ctx.fillStyle = '#0d0d24';
+    ctx.fillRect(0, 0, W, H);
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 32px "Segoe UI", sans-serif';
+    ctx.fillText('📊 统计数据', W / 2, 60);
+
+    const gp = stats.gamesPlayed;
+    const winRate = gp > 0 ? (stats.wins / gp * 100).toFixed(1) : '0.0';
+    const kd = stats.totalDeaths > 0 ? (stats.totalKills / stats.totalDeaths).toFixed(2) : stats.totalKills > 0 ? '∞' : '0.00';
+
+    const rows = [
+      ['总场次', gp],
+      ['胜利', stats.wins],
+      ['失败', stats.losses],
+      ['胜率', winRate + '%'],
+      ['总击杀', stats.totalKills],
+      ['总死亡', stats.totalDeaths],
+      ['KD 比', kd],
+      ['总回合', stats.totalTurns],
+    ];
+    const startY = 110;
+    const rowH = 44;
+    for (let i = 0; i < rows.length; i++) {
+      const y = startY + i * rowH;
+      ctx.textAlign = 'right';
+      ctx.fillStyle = 'rgba(255,255,255,0.5)';
+      ctx.font = '18px "Segoe UI", sans-serif';
+      ctx.fillText(rows[i][0], W / 2 - 30, y);
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#fff';
+      ctx.font = 'bold 18px "Segoe UI", sans-serif';
+      ctx.fillText(String(rows[i][1]), W / 2 + 30, y);
+    }
+
+    const btnY = startY + rows.length * rowH + 16;
+    drawButton('重置统计数据', (W - BTN_W) / 2, btnY, BTN_W, BTN_H, 'reset_stats', '#555');
+    drawButton('返  回', (W - 160) / 2, btnY + 70, 160, 44, 'back');
+    ctx.restore();
+  }
+
+  // ---------- 场地 ----------
+  function drawField() {
+    // 世界背景
+    ctx.fillStyle = FIELD_COLOR;
+    ctx.fillRect(0, 0, WORLD_W, WORLD_H);
+
+    // 中圈
+    ctx.strokeStyle = FIELD_LINE_COLOR;
+    ctx.lineWidth = 1;
+    const cx = WORLD_W / 2, cy = WORLD_H / 2;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 80, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // 中线
+    ctx.beginPath();
+    ctx.moveTo(cx, 0);
+    ctx.lineTo(cx, WORLD_H);
+    ctx.stroke();
+
+    // 边界线
+    ctx.strokeStyle = 'rgba(255,255,255,0.2)';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(2, 2, WORLD_W - 4, WORLD_H - 4);
+  }
+
+  // ---------- 障碍物 ----------
+  function drawObstacles() {
+    const obs = MAPS[settings.mapId].obstacles;
+    if (obs.length === 0) return;
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = '#5a4a3a';
+    ctx.strokeStyle = '#8a7a6a';
+    ctx.lineWidth = 2;
+    for (const o of obs) {
+      ctx.fillRect(o.x, o.y, o.w, o.h);
+      ctx.strokeRect(o.x, o.y, o.w, o.h);
+      // 顶部高光
+      ctx.fillStyle = 'rgba(255,255,255,0.08)';
+      ctx.fillRect(o.x, o.y, o.w, 3);
+      ctx.fillStyle = '#5a4a3a';
+    }
+    ctx.restore();
+  }
+
+  // ---------- 队员 ----------
+  function drawUnits() {
+    for (const color of ['red', 'blue']) {
+      const team = state.teams[color];
+      const colors = TEAM_COLORS[color];
+      for (const u of team) {
+        if (!u.alive) continue;
+        const r = u.radius;
+
+        // 阴影
+        ctx.save();
+        ctx.shadowColor = 'rgba(0,0,0,0.3)';
+        ctx.shadowBlur = 8;
+        ctx.shadowOffsetY = 3;
+
+        // 身体
+        const grad = ctx.createRadialGradient(
+          u.x - r * 0.3, u.y - r * 0.3, 2,
+          u.x, u.y, r
+        );
+        grad.addColorStop(0, colors.light);
+        grad.addColorStop(0.6, colors.main);
+        grad.addColorStop(1, colors.dark);
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(u.x, u.y, r, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.restore();
+
+        // 高光
+        ctx.save();
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = '#fff';
+        ctx.beginPath();
+        ctx.ellipse(u.x - r * 0.25, u.y - r * 0.25, r * 0.3, r * 0.2, -0.5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+
+        // 编号
+        ctx.fillStyle = '#fff';
+        ctx.font = `bold ${r * 0.9}px "Segoe UI", sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(u.index + 1, u.x, u.y + 1);
+      }
+    }
+  }
+
+  // ---------- 选中光圈 ----------
+  function drawSelectionRing() {
+    const u = state.selectedUnit;
+    if (!u || !u.alive) return;
+    const team = state.currentTeam === 'red' ? state.teams.red : state.teams.blue;
+    if (!team.includes(u)) return;
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = TEAM_COLORS[state.currentTeam].light;
+    ctx.lineWidth = 3;
+    ctx.setLineDash([5, 5]);
+    ctx.beginPath();
+    ctx.arc(u.x, u.y, u.radius + 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------- 瞄准方向 ----------
+  function drawAimLine() {
+    const player = state.selectedUnit;
+    if (!player || !player.alive) return;
+    if (state.turnPhase !== 'aim' && state.turnPhase !== 'charge') return;
+    // PvAI 模式仅红方显示；PvP 模式双方都显示
+    if (settings.gameMode === 'ai' && state.currentTeam !== 'red') return;
+
+    const angle = Math.atan2(state.mouseY - player.y, state.mouseX - player.x);
+    const len = 60; // 方向指示线长度
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+    ctx.lineWidth = 2.5;
+    ctx.setLineDash([6, 6]);
+    ctx.beginPath();
+    ctx.moveTo(player.x, player.y);
+    ctx.lineTo(
+      player.x + Math.cos(angle) * len,
+      player.y + Math.sin(angle) * len
+    );
+    ctx.stroke();
+
+    // 箭头
+    const arrowSize = 10;
+    const arrowAngle = 0.5;
+    ctx.setLineDash([]);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.beginPath();
+    const tipX = player.x + Math.cos(angle) * len;
+    const tipY = player.y + Math.sin(angle) * len;
+    ctx.moveTo(tipX, tipY);
+    ctx.lineTo(
+      tipX - Math.cos(angle - arrowAngle) * arrowSize,
+      tipY - Math.sin(angle - arrowAngle) * arrowSize
+    );
+    ctx.lineTo(
+      tipX - Math.cos(angle + arrowAngle) * arrowSize,
+      tipY - Math.sin(angle + arrowAngle) * arrowSize
+    );
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ---------- 蓄力条 ----------
+  function drawChargeBar(W, H) {
+    if (settings.gameMode === 'ai' && state.currentTeam !== 'red') return;
+    if (state.turnPhase !== 'charge' && state.turnPhase !== 'aim') return;
+    if (!state.selectedUnit) return;
+
+    const barW = 200, barH = 16;
+    const bx = (W - barW) / 2, by = H - 50;
+    const pct = state.charge / MAX_CHARGE;
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+
+    // 背景
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, barW, barH, 8);
+    ctx.fill();
+
+    // 填充
+    const grad = ctx.createLinearGradient(bx, 0, bx + barW, 0);
+    grad.addColorStop(0, '#2ecc71');
+    grad.addColorStop(0.5, '#f1c40f');
+    grad.addColorStop(1, '#e74c3c');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.roundRect(bx + 2, by + 2, (barW - 4) * pct, barH - 4, 6);
+    ctx.fill();
+
+    // 文字
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(`蓄力 ${Math.round(pct * 100)}%`, bx + barW / 2, by + barH / 2);
+
+    ctx.restore();
+  }
+
+  // ---------- 子弹 ----------
+  function drawBullet() {
+    if (!state.bullet || state.bullet.done) return;
+
+    const b = state.bullet;
+    ctx.save();
+    ctx.shadowColor = 'rgba(255,200,50,0.6)';
+    ctx.shadowBlur = 15;
+
+    // 发光球
+    const grad = ctx.createRadialGradient(b.x - 2, b.y - 2, 1, b.x, b.y, 8);
+    grad.addColorStop(0, '#fff');
+    grad.addColorStop(0.3, '#ffe066');
+    grad.addColorStop(1, '#ff8800');
+    ctx.fillStyle = grad;
+    ctx.beginPath();
+    ctx.arc(b.x, b.y, 6, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 拖尾
+    ctx.shadowBlur = 0;
+    ctx.globalAlpha = 0.3;
+    ctx.strokeStyle = '#ffcc00';
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(b.prevX, b.prevY);
+    ctx.lineTo(b.x, b.y);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  // ---------- 击杀特效 ----------
+  function drawKillEffects() {
+    const now = Date.now();
+    state.deadTargets = state.deadTargets.filter(e => now - e.t < 600);
+    for (const e of state.deadTargets) {
+      const age = (now - e.t) / 600;
+      const alpha = 1 - age;
+      const radius = 4 + age * 20;
+
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = '#ff4444';
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, radius, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // 叉号
+      ctx.strokeStyle = '#ff6666';
+      ctx.lineWidth = 2.5;
+      const s = 10 * (1 - age * 0.3);
+      ctx.beginPath();
+      ctx.moveTo(e.x - s, e.y - s); ctx.lineTo(e.x + s, e.y + s);
+      ctx.moveTo(e.x + s, e.y - s); ctx.lineTo(e.x - s, e.y + s);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
+  // ---------- UI ----------
+  function drawUI(W, H) {
+    // 顶部状态栏背景
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.beginPath();
+    ctx.roundRect(10, 10, W - 20, 44, 10);
+    ctx.fill();
+    ctx.restore();
+
+    // 红队信息
+    const rAlive = getAliveCount('red');
+    ctx.fillStyle = TEAM_COLORS.red.main;
+    ctx.font = 'bold 18px "Segoe UI", sans-serif';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('🔴 红队', 30, 32);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText(`${rAlive}/${settings.teamSize}`, 110, 32);
+
+    // 地图名
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(255,255,255,0.2)';
+    ctx.font = '11px "Segoe UI", sans-serif';
+    ctx.fillText(MAPS[settings.mapId].name, 30, 50);
+
+    // 回合指示
+    const turnLabel = settings.gameMode === 'pvp'
+      ? (state.currentTeam === 'red' ? '🔴 红方回合' : '🔵 蓝方回合')
+      : `回合 ${state.turnCount}`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = state.currentTeam === 'red' ? TEAM_COLORS.red.main : TEAM_COLORS.blue.main;
+    ctx.font = state.gameOver ? '14px "Segoe UI", sans-serif' : 'bold 16px "Segoe UI", sans-serif';
+    ctx.fillText(turnLabel, W / 2, 32);
+
+    // 蓝队信息
+    const bAlive = getAliveCount('blue');
+    ctx.textAlign = 'right';
+    ctx.fillStyle = TEAM_COLORS.blue.main;
+    ctx.font = 'bold 18px "Segoe UI", sans-serif';
+    ctx.fillText('🔵 蓝队', W - 30, 32);
+
+    ctx.fillStyle = '#fff';
+    ctx.font = '16px "Segoe UI", sans-serif';
+    ctx.fillText(`${bAlive}/${settings.teamSize}`, W - 110, 32);
+
+    // 底部提示
+    drawHint(W, H);
+
+    // 退出按钮
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = 'rgba(255,255,255,0.08)';
+    ctx.beginPath();
+    ctx.roundRect(W - 70, 14, 56, 28, 6);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(255,255,255,0.6)';
+    ctx.font = '13px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('退出', W - 42, 28);
+    ctx.restore();
+
+    // 蓄力条
+    drawChargeBar(W, H);
+  }
+
+  function drawHint(W, H) {
+    let text = '';
+    if (state.gameOver) {
+      text = '游戏结束 — 点击或按 R 重新开始';
+    } else if (state.turnPhase === 'select') {
+      const prefix = state.currentTeam === 'red' ? '🔴' : '🔵';
+      text = `${prefix} ${state.currentTeam === 'red' ? '红方' : '蓝方'} — 点击选中一名队员`;
+    } else if (state.turnPhase === 'aim') {
+      text = '🎯 鼠标瞄准，按 空格键 蓄力发射';
+    } else if (state.turnPhase === 'charge') {
+      text = '⏫ 蓄力中... 松开 空格键 发射';
+    } else if (settings.gameMode !== 'pvp') {
+      text = '🤖 AI 思考中...';
+    }
+
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = 'rgba(0,0,0,0.4)';
+    ctx.font = '15px "Segoe UI", sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'bottom';
+    ctx.fillText(text, W / 2, H - 14);
+    ctx.restore();
+  }
+
+  // ---------- 暂停菜单 ----------
+  function drawPauseMenu(W, H) {
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    // 半透明遮罩
+    ctx.fillStyle = 'rgba(0,0,0,0.7)';
+    ctx.fillRect(0, 0, W, H);
+
+    // 标题
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px "Segoe UI", sans-serif';
+    ctx.fillText('⏸ 游戏暂停', W / 2, H * 0.25);
+    ctx.fillStyle = 'rgba(255,255,255,0.3)';
+    ctx.font = '14px "Segoe UI", sans-serif';
+    ctx.fillText('按 Esc 继续游戏', W / 2, H * 0.25 + 36);
+
+    // 按钮网格 2×2 居中
+    const bw = 200, bh = 46, gap = 14;
+    const cols = 2;
+    const totalW = cols * bw + (cols - 1) * gap;
+    const totalH = Math.ceil(pauseBtnDefs.length / cols) * bh + (Math.ceil(pauseBtnDefs.length / cols) - 1) * gap;
+    const startX = (W - totalW) / 2;
+    const startY = (H - totalH) / 2 + 10;
+
+    for (let i = 0; i < pauseBtnDefs.length; i++) {
+      const col = i % cols, row = Math.floor(i / cols);
+      const bx = startX + col * (bw + gap);
+      const by = startY + row * (bh + gap);
+      const def = pauseBtnDefs[i];
+      const hid = 'pause_' + def.id;
+      const hovered = hoveredBtn === hid;
+
+      ctx.fillStyle = hovered ? (def.color || '#e74c3c') : (def.color ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.08)');
+      ctx.beginPath();
+      ctx.roundRect(bx, by, bw, bh, 8);
+      ctx.fill();
+      if (hovered) {
+        ctx.strokeStyle = 'rgba(255,255,255,0.3)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      ctx.fillStyle = hovered ? '#fff' : 'rgba(255,255,255,0.7)';
+      ctx.font = '16px "Segoe UI", sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText(def.label, bx + bw / 2, by + bh / 2);
+    }
+    ctx.restore();
+  }
+
+  // ---------- 游戏结束 ----------
+  function drawGameOverScreen(W, H) {
+    ctx.save();
+    ctx.shadowColor = 'transparent';
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, W, H);
+
+    const win = state.winner === 'red';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    if (settings.gameMode === 'pvp') {
+      const teamLabel = state.winner === 'red' ? '🔴 红方' : '🔵 蓝方';
+      ctx.fillStyle = win ? '#e74c3c' : '#3498db';
+      ctx.font = 'bold 48px "Segoe UI", sans-serif';
+      ctx.fillText(`${teamLabel} 获胜！`, W / 2, H / 2 - 50);
+    } else {
+      ctx.fillStyle = win ? '#e74c3c' : '#3498db';
+      ctx.font = 'bold 56px "Segoe UI", sans-serif';
+      ctx.fillText(win ? '🎉 胜利！' : '💀 失败', W / 2, H / 2 - 50);
+    }
+
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.font = '20px "Segoe UI", sans-serif';
+    ctx.fillText(`回合 ${state.turnCount}  ·  击杀 ${state.killCount.red}:${state.killCount.blue}`, W / 2, H / 2 + 4);
+
+    // 再来一局
+    const btnW = 180, btnH = 44, cx = W / 2;
+    drawButton('再来一局', cx - btnW / 2, H / 2 + 60, btnW, btnH, 'restart', '#c0392b');
+    drawButton('返回菜单', cx - btnW / 2, H / 2 + 60 + 56, btnW, btnH, 'to_menu');
+
+    ctx.restore();
+  }
+
+  // ============================================================
+  //  roundRect polyfill
+  // ============================================================
+  if (!CanvasRenderingContext2D.prototype.roundRect) {
+    CanvasRenderingContext2D.prototype.roundRect = function(x, y, w, h, radii) {
+      const r = (typeof radii === 'number') ? radii : (radii || 0);
+      this.moveTo(x + r, y);
+      this.lineTo(x + w - r, y);
+      this.quadraticCurveTo(x + w, y, x + w, y + r);
+      this.lineTo(x + w, y + h - r);
+      this.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+      this.lineTo(x + r, y + h);
+      this.quadraticCurveTo(x, y + h, x, y + h - r);
+      this.lineTo(x, y + r);
+      this.quadraticCurveTo(x, y, x + r, y);
+      this.closePath();
+      return this;
+    };
+  }
+
+  // ============================================================
+  //  游戏循环
+  // ============================================================
+  function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+  }
+
+  // ============================================================
+  //  充电积累（在 gameLoop 中处理）
+  // ============================================================
+  // 增强 update 以处理蓄力积累
+  function update() {
+    if (state.gameOver) return;
+    if (paused) return;  // 暂停时冻结游戏逻辑
+
+    // 蓄力来回摆动
+    if (state.turnPhase === 'charge' && state.charging && state.selectedUnit) {
+      state.charge += settings.chargeSpeed * state.chargeDir;
+      if (state.charge >= MAX_CHARGE) {
+        state.charge = MAX_CHARGE;
+        state.chargeDir = -1;
+      } else if (state.charge <= 0) {
+        state.charge = 0;
+        state.chargeDir = 1;
+      }
+    }
+
+    // 子弹飞行
+    if (state.turnPhase === 'bullet' && state.bullet && !state.bullet.done) {
+      const b = state.bullet;
+      b.prevX = b.x;
+      b.prevY = b.y;
+      b.x += b.vx;
+      b.y += b.vy;
+      b.energy -= ENERGY_DECAY;
+
+      // 碰撞检测：敌人（穿透击杀）
+      const enemyTeam = b.team === 'red' ? state.teams.blue : state.teams.red;
+      const hits = checkBulletCollisions(b, enemyTeam);
+      for (const u of hits) {
+        if (!u.alive) continue;
+        u.alive = false;
+        state.killCount[b.team]++;
+        state.deadTargets.push({ x: u.x, y: u.y, t: Date.now() });
+      }
+
+      // 队友反弹
+      const myTeam = b.team === 'red' ? state.teams.red : state.teams.blue;
+      for (const u of myTeam) {
+        if (!u.alive || u.id === b.unitId) continue;
+        if (dist(b.x, b.y, u.x, u.y) < u.radius + 4) {
+          // 从队友圆心方向反弹
+          const angle = Math.atan2(b.y - u.y, b.x - u.x);
+          const speed = Math.hypot(b.vx, b.vy);
+          b.vx = Math.cos(angle) * speed;
+          b.vy = Math.sin(angle) * speed;
+          b.x = u.x + Math.cos(angle) * (u.radius + 5);
+          b.y = u.y + Math.sin(angle) * (u.radius + 5);
+          break;
+        }
+      }
+
+      // 障碍物反弹
+      let bounced = false;
+      const obs = MAPS[settings.mapId].obstacles;
+      for (const o of obs) {
+        if (pointInRect(b.x, b.y, o)) {
+          // 判断从哪边进入
+          const prevIn = pointInRect(b.prevX, b.prevY, o);
+          if (!prevIn) {
+            const overlapX = Math.min(b.x - o.x, o.x + o.w - b.x);
+            const overlapY = Math.min(b.y - o.y, o.y + o.h - b.y);
+            if (overlapX < overlapY) {
+              b.vx = -b.vx;
+              b.x = b.prevX;
+            } else {
+              b.vy = -b.vy;
+              b.y = b.prevY;
+            }
+            bounced = true;
+            break;
+          }
+        }
+      }
+      if (bounced) return;
+
+      // 边界反弹
+      if (b.x <= 0) { b.x = 0; b.vx = -b.vx; }
+      if (b.x >= WORLD_W) { b.x = WORLD_W; b.vx = -b.vx; }
+      if (b.y <= 0) { b.y = 0; b.vy = -b.vy; }
+      if (b.y >= WORLD_H) { b.y = WORLD_H; b.vy = -b.vy; }
+
+      // 能量耗尽时停止
+      if (b.energy <= 0) {
+        b.done = true;
+        resolveTurn(b);
+      }
+    }
+  }
+
+  // ============================================================
+  //  启动
+  // ============================================================
+  init();
+  gameLoop();
+
+})();
+</script>
+</body>
+</html>
