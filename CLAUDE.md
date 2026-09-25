@@ -16,6 +16,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ├── project2/          ← 五子棋 · 古典棋韵
 │   ├── gomoku.html    ← 古典中国风五子棋
 │   └── README.md      ← 项目说明
+├── project3/          ← 俄罗斯方块 · Tetris
+│   ├── tetris.html    ← 经典俄罗斯方块（Canvas，单文件）
+│   └── README.md      ← 项目说明
 ├── CLAUDE.md          ← 本文件
 └── .gitignore
 ```
@@ -46,6 +49,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 双人轮流点击（人人对战）
 - 计时器、悔棋、回合记录、胜负统计
 
+### project3 — 俄罗斯方块 · Tetris
+
+经典规则俄罗斯方块：
+- 10×20 棋盘，7 种标准方块 + 7-bag 随机器（出块公平）
+- 幽灵落点预览、简易 Wall Kick 贴墙旋转
+- 消行计分（100/300/500/800 × 等级），每 10 行升级加速
+- 键盘操作 + 移动端触控按钮，暂停/重开
+- localStorage 持久化最高分
+
 ## 常用命令
 
 ```bash
@@ -53,6 +65,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 start project1/contactv1.html
 # 打开五子棋
 start project2/gomoku.html
+# 打开俄罗斯方块
+start project3/tetris.html
 ```
 
 ## 通用代码模式
