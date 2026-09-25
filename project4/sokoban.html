@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="推箱子 Sokoban —— 一个纯前端实现的经典推箱子小游戏，含 10 个关卡、撤销、选关与最佳记录。">
+  <title>推箱子 · Sokoban</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
+<style>
+/* ============ 基础 ============ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --cell: 48px;
+  --bg1: #141b2e;
+  --bg2: #0c1120;
+  --panel: rgba(255, 255, 255, 0.06);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --accent: #ffb547;
+  --accent2: #4ade80;
+  --text: #e8ecf4;
+  --muted: #93a0b8;
+  font-size: 16px;
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 600px at 20% -10%, #233254 0%, transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, #2b1f4a 0%, transparent 55%),
+    linear-gradient(160deg, var(--bg1), var(--bg2));
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* ============ 顶栏 ============ */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+  backdrop-filter: blur(8px);
+}
+
+.topbar h1 { font-size: 1.25rem; letter-spacing: 1px; white-space: nowrap; }
+
+.level-info { font-size: 0.95rem; color: var(--accent); font-weight: 600; }
+
+.stats { display: flex; gap: 14px; font-size: 0.9rem; color: var(--muted); }
+.stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.actions { display: flex; gap: 8px; margin-left: auto; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s;
+  user-select: none;
+}
+button:hover { background: rgba(255, 255, 255, 0.16); }
+button:active { transform: scale(0.96); }
+button.primary { background: var(--accent); border-color: transparent; color: #231a06; font-weight: 700; }
+button.primary:hover { filter: brightness(1.08); }
+
+/* ============ 棋盘 ============ */
+main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 16px;
+}
+
+#board-wrap {
+  padding: 14px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  touch-action: none;
+}
+
+#board { position: relative; }
+
+.tile { position: absolute; width: var(--cell); height: var(--cell); }
+
+.tile.floor {
+  background: rgba(255, 255, 255, 0.035);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.025);
+}
+
+.tile.wall {
+  background: linear-gradient(160deg, #4a5578, #333d59);
+  border-radius: 6px;
+  box-shadow:
+    inset 0 2px 0 rgba(255, 255, 255, 0.18),
+    inset 0 -3px 0 rgba(0, 0, 0, 0.3),
+    0 3px 6px rgba(0, 0, 0, 0.35);
+}
+
+.tile.goal::after {
+  content: "";
+  position: absolute;
+  inset: 22%;
+  border-radius: 50%;
+  border: 3px dashed rgba(74, 222, 128, 0.75);
+  box-shadow: 0 0 10px rgba(74, 222, 128, 0.35), inset 0 0 8px rgba(74, 222, 128, 0.25);
+  animation: goal-pulse 2.2s ease-in-out infinite;
+}
+
+@keyframes goal-pulse {
+  0%, 100% { opacity: 0.55; transform: scale(0.92); }
+  50%      { opacity: 1;    transform: scale(1); }
+}
+
+/* 箱子 */
+.box {
+  position: absolute;
+  width: var(--cell);
+  height: var(--cell);
+  transition: transform 0.13s ease-out;
+  z-index: 2;
+}
+.box .inner {
+  position: absolute;
+  inset: 9%;
+  border-radius: 14%;
+  background:
+    repeating-linear-gradient(45deg, rgba(0,0,0,0.08) 0 6px, transparent 6px 12px),
+    linear-gradient(160deg, #d99a4e, #b06f2c);
+  border: 2px solid #8a5420;
+  box-shadow: inset 0 3px 0 rgba(255,255,255,0.28), inset 0 -4px 0 rgba(0,0,0,0.22), 0 4px 8px rgba(0,0,0,0.35);
+}
+.box .inner::before, .box .inner::after {
+  content: "";
+  position: absolute;
+  background: rgba(0, 0, 0, 0.22);
+  border-radius: 2px;
+}
+.box .inner::before { left: 12%; right: 12%; top: calc(50% - 3px); height: 6px; }
+.box .inner::after  { top: 12%; bottom: 12%; left: calc(50% - 3px); width: 6px; }
+
+.box.on-goal .inner {
+  background:
+    repeating-linear-gradient(45deg, rgba(0,0,0,0.08) 0 6px, transparent 6px 12px),
+    linear-gradient(160deg, #6ee7a0, #2f9e5d);
+  border-color: #1e7a44;
+  box-shadow: 0 0 14px rgba(74, 222, 128, 0.55), inset 0 3px 0 rgba(255,255,255,0.3), 0 4px 8px rgba(0,0,0,0.35);
+}
+
+/* 玩家 */
+#player {
+  position: absolute;
+  width: var(--cell);
+  height: var(--cell);
+  z-index: 3;
+  transition: transform 0.13s ease-out;
+  display: grid;
+  place-items: center;
+}
+#player .body {
+  width: 72%;
+  height: 72%;
+  border-radius: 46%;
+  background: radial-gradient(circle at 32% 28%, #7cc4ff, #2f6fd0 70%);
+  box-shadow: inset 0 -4px 0 rgba(0,0,0,0.25), 0 4px 10px rgba(0,0,0,0.4);
+  position: relative;
+}
+#player .eye {
+  position: absolute;
+  top: 32%;
+  width: 16%;
+  height: 26%;
+  border-radius: 40%;
+  background: #10233f;
+  transition: left 0.13s, top 0.13s;
+}
+#player .eye.l { left: 26%; }
+#player .eye.r { left: 56%; }
+#player.dir-up .eye { top: 20%; height: 20%; }
+#player.dir-down .eye { top: 44%; }
+#player.dir-left .eye.l { left: 18%; }
+#player.dir-left .eye.r { left: 42%; }
+#player.dir-right .eye.l { left: 40%; }
+#player.dir-right .eye.r { left: 64%; }
+#player .blush {
+  position: absolute;
+  top: 58%;
+  width: 14%;
+  height: 8%;
+  border-radius: 50%;
+  background: rgba(255, 120, 140, 0.65);
+}
+#player .blush.l { left: 18%; }
+#player .blush.r { left: 66%; }
+
+/* ============ 方向键 ============ */
+#dpad {
+  display: none;
+  grid-template-areas: ". u ." "l d r";
+  gap: 8px;
+}
+#dpad .dp {
+  width: 58px;
+  height: 58px;
+  font-size: 1.1rem;
+  border-radius: 12px;
+}
+@media (pointer: coarse) { #dpad { display: grid; } }
+
+/* ============ 弹窗 ============ */
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(8, 10, 20, 0.72);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+  backdrop-filter: blur(4px);
+}
+.overlay.hidden { display: none; }
+
+.dialog {
+  background: linear-gradient(170deg, #1d2740, #141b2e);
+  border: 1px solid var(--panel-border);
+  border-radius: 18px;
+  padding: 28px 32px;
+  text-align: center;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  min-width: 280px;
+  max-width: 90vw;
+  animation: pop-in 0.22s ease-out;
+}
+@keyframes pop-in {
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+.dialog h2 { margin: 6px 0 10px; }
+.dialog-emoji { font-size: 3rem; }
+.dialog-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
+.muted { color: var(--muted); font-size: 0.85rem; }
+
+#level-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 56px);
+  gap: 10px;
+  justify-content: center;
+  margin-top: 14px;
+}
+#level-grid .lv {
+  height: 56px;
+  border-radius: 12px;
+  font-weight: 700;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+#level-grid .lv small { font-size: 0.6rem; font-weight: 400; color: var(--muted); position: absolute; bottom: 4px; }
+#level-grid .lv.done { border-color: var(--accent2); color: var(--accent2); }
+#level-grid .lv.cur { outline: 2px solid var(--accent); }
+
+footer.hint {
+  text-align: center;
+  padding: 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ============ 窄屏适配 ============ */
+@media (max-width: 640px) {
+  .topbar { gap: 10px; padding: 10px 12px; }
+  .topbar h1 { font-size: 1.05rem; }
+  .stats { gap: 10px; font-size: 0.8rem; }
+  .actions button { padding: 5px 9px; font-size: 0.85rem; }
+  #board-wrap { padding: 8px; }
+}
+
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>📦 推箱子</h1>
+    <div class="level-info">
+      <span id="level-name">第 1 关 · 入门</span>
+    </div>
+    <div class="stats">
+      <span class="stat">步数 <b id="moves">0</b></span>
+      <span class="stat">推动 <b id="pushes">0</b></span>
+      <span class="stat">最佳 <b id="best">—</b></span>
+    </div>
+    <div class="actions">
+      <button id="btn-undo" title="撤销 (Z)">↩ 撤销</button>
+      <button id="btn-reset" title="重玩本关 (R)">⟲ 重玩</button>
+      <button id="btn-levels" title="选择关卡">☰ 选关</button>
+      <button id="btn-sound" title="音效开关">🔊</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="board-wrap">
+      <div id="board" aria-label="游戏棋盘"></div>
+    </div>
+
+    <div id="dpad" aria-label="方向按键">
+      <button class="dp" data-dir="up"    style="grid-area: u">▲</button>
+      <button class="dp" data-dir="left"  style="grid-area: l">◀</button>
+      <button class="dp" data-dir="down"  style="grid-area: d">▼</button>
+      <button class="dp" data-dir="right" style="grid-area: r">▶</button>
+    </div>
+  </main>
+
+  <!-- 通关弹窗 -->
+  <div id="win-overlay" class="overlay hidden">
+    <div class="dialog">
+      <div class="dialog-emoji">🎉</div>
+      <h2>通关！</h2>
+      <p id="win-detail">用 12 步，推动 3 次</p>
+      <p id="win-best" class="muted"></p>
+      <div class="dialog-actions">
+        <button id="btn-replay">重玩本关</button>
+        <button id="btn-next" class="primary">下一关 →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- 选关弹窗 -->
+  <div id="level-modal" class="overlay hidden">
+    <div class="dialog">
+      <h2>选择关卡</h2>
+      <div id="level-grid"></div>
+      <div class="dialog-actions">
+        <button id="btn-close-levels" class="primary">关闭</button>
+      </div>
+    </div>
+  </div>
+
+  <footer class="hint">方向键 / WASD 移动 · Z 撤销 · R 重玩 · 手机可滑动或使用方向键</footer>
+
+  <script>
+/**
+ * 关卡数据 —— 标准 Sokoban 字符表示：
+ *   '#' 墙        ' ' 地板
+ *   '@' 玩家      '+' 玩家（站在目标点上）
+ *   '
+</body>
+</html>
+ 箱子      '*' 箱子（已在目标点上）
+ *   '.' 目标点
+ * 每关箱子数必须等于目标点数。所有关卡均由 tools/verify-levels.js 求解验证可通。
+ */
+const LEVELS = [
+  {
+    name: "入门",
+    map: `
+#######
+#     #
+# @$. #
+#     #
+#######`,
+  },
+  {
+    name: "第一步",
+    map: `
+#######
+#  .  #
+#  $  #
+#  @  #
+#     #
+#######`,
+  },
+  {
+    name: "成对",
+    map: `
+########
+#  ..  #
+#  $  #
+#  @   #
+#      #
+########`,
+  },
+  {
+    name: "绕墙",
+    map: `
+########
+#      #
+# ##$. #
+# ##   #
+#  @   #
+#      #
+########`,
+  },
+  {
+    name: "分流",
+    map: `
+########
+#   .  #
+# $   #
+#   @  #
+#  .   #
+#      #
+########`,
+  },
+  {
+    name: "十字路",
+    map: `
+#########
+#       #
+# $   . #
+#   @   #
+# .   $ #
+#       #
+#########`,
+  },
+  {
+    name: "中庭",
+    map: `
+#########
+#       #
+# $ $ $ #
+#   #   #
+#  ...  #
+#   @   #
+#########`,
+  },
+  {
+    name: "回廊",
+    map: `
+#########
+#   #   #
+# $ $ . #
+#   #   #
+#.  @   #
+#   #   #
+#########`,
+  },
+  {
+    name: "对称",
+    map: `
+########
+#      #
+# $  $ #
+# .  . #
+#  $  #
+#  +.  #
+#      #
+########`,
+  },
+  {
+    name: "环形仓库",
+    map: `
+########
+#  ..  #
+# .##. #
+# $##$ #
+#  ##  #
+# $  $ #
+#  @   #
+########`,
+  },
+];
+
+// 供 Node 端验证脚本复用
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = LEVELS;
+}
+  </script>
+  <script>
+/* 推箱子 Sokoban —— 纯前端实现，无任何依赖 */
+(function () {
+  "use strict";
+
+  /* ---------- 工具 ---------- */
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(key, fallback) {
+      try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+      catch { return fallback; }
+    },
+    set(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
+  };
+
+  /* ---------- 音效（WebAudio 合成，无音频文件） ---------- */
+  const Sound = {
+    enabled: store.get("sokoban.sound", true),
+    ctx: null,
+    play(freq, dur, type = "triangle", vol = 0.05) {
+      if (!this.enabled) return;
+      try {
+        this.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(vol, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.connect(gain).connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + dur);
+      } catch { /* 音频不可用时静默 */ }
+    },
+    move()   { this.play(340, 0.05, "triangle", 0.03); },
+    push()   { this.play(180, 0.09, "square", 0.035); },
+    blocked(){ this.play(90, 0.08, "sawtooth", 0.03); },
+    win()    { [523, 659, 784, 1047].forEach((f, i) =>
+                setTimeout(() => this.play(f, 0.16, "triangle", 0.06), i * 110)); },
+  };
+
+  /* ---------- 游戏状态 ---------- */
+  const board = $("board");
+  const state = {
+    idx: 0,
+    cols: 0,
+    rows: 0,
+    walls: new Set(),
+    goals: new Set(),
+    boxes: new Set(),
+    player: 0,          // 一维坐标 = y * cols + x
+    facing: "down",
+    moves: 0,
+    pushes: 0,
+    history: [],
+    done: false,
+    boxEls: new Map(),  // 一维坐标 -> DOM
+  };
+
+  const key = (x, y) => y * state.cols + x;
+  const DIRS = {
+    up:    { dx: 0, dy: -1 },
+    down:  { dx: 0, dy: 1 },
+    left:  { dx: -1, dy: 0 },
+    right: { dx: 1, dy: 0 },
+  };
+
+  /* ---------- 关卡解析 ---------- */
+  function loadLevel(idx) {
+    floorCache = null;
+    store.set("sokoban.progress", idx);
+    const rows = LEVELS[idx].map.trim().split("\n").map((r) => r.replace(/\r$/, ""));
+    state.idx = idx;
+    state.rows = rows.length;
+    state.cols = Math.max(...rows.map((r) => r.length));
+    state.walls = new Set();
+    state.goals = new Set();
+    state.boxes = new Set();
+    state.moves = 0;
+    state.pushes = 0;
+    state.history = [];
+    state.done = false;
+
+    rows.forEach((row, y) => {
+      for (let x = 0; x < row.length; x++) {
+        const c = row[x];
+        const k = key(x, y);
+        if (c === "#") state.walls.add(k);
+        if (c === "." || c === "*" || c === "+") state.goals.add(k);
+        if (c === "$" || c === "*") state.boxes.add(k);
+        if (c === "@" || c === "+") state.player = k;
+      }
+    });
+
+    fitBoard();
+    render();
+    updateHud();
+    $("level-name").textContent = `第 ${idx + 1} 关 · ${LEVELS[idx].name}`;
+  }
+
+  /* ---------- 渲染 ---------- */
+  function fitBoard() {
+    const availW = Math.min(window.innerWidth - 48, 640);
+    const availH = window.innerHeight - 230;
+    const cell = Math.max(24, Math.floor(Math.min(availW / state.cols, availH / state.rows)));
+    document.documentElement.style.setProperty("--cell", cell + "px");
+  }
+
+  function el(tag, cls) {
+    const e = document.createElement(tag);
+    if (cls) e.className = cls;
+    return e;
+  }
+
+  function render() {
+    board.innerHTML = "";
+    board.style.width = state.cols * parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell")) + "px";
+    board.style.height = state.rows * parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell")) + "px";
+
+    for (let y = 0; y < state.rows; y++) {
+      for (let x = 0; x < state.cols; x++) {
+        const k = key(x, y);
+        if (state.walls.has(k)) {
+          const t = el("div", "tile wall");
+          place(t, x, y);
+          board.appendChild(t);
+        } else {
+          // 目标点只在非墙格绘制；外侧空白格不画地板
+          const isFloor = state.goals.has(k) || reachableFloor().has(k);
+          if (!isFloor) continue;
+          const t = el("div", "tile floor" + (state.goals.has(k) ? " goal" : ""));
+          place(t, x, y);
+          board.appendChild(t);
+        }
+      }
+    }
+
+    state.boxEls = new Map();
+    for (const k of state.boxes) {
+      const b = el("div", "box");
+      b.appendChild(el("div", "inner"));
+      state.boxEls.set(k, b);
+      board.appendChild(b);
+    }
+
+    const p = el("div");
+    p.id = "player";
+    p.innerHTML = `<div class="body"><div class="eye l"></div><div class="eye r"></div>
+                   <div class="blush l"></div><div class="blush r"></div></div>`;
+    board.appendChild(p);
+
+    syncEntities(true);
+  }
+
+  // 洪水填充：从玩家出发找出所有连通地板，用于只绘制真实可站立的区域
+  let floorCache = null;
+  function reachableFloor() {
+    if (floorCache) return floorCache;
+    const seen = new Set([state.player]);
+    const queue = [state.player];
+    while (queue.length) {
+      const k = queue.pop();
+      const x = k % state.cols, y = Math.floor(k / state.cols);
+      for (const { dx, dy } of Object.values(DIRS)) {
+        const nx = x + dx, ny = y + dy;
+        if (nx < 0 || ny < 0 || nx >= state.cols || ny >= state.rows) continue;
+        const nk = key(nx, ny);
+        if (!state.walls.has(nk) && !seen.has(nk)) {
+          seen.add(nk);
+          queue.push(nk);
+        }
+      }
+    }
+    floorCache = seen;
+    return seen;
+  }
+
+  function place(e, x, y) {
+    const cell = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell"));
+    e.style.transform = `translate(${x * cell}px, ${y * cell}px)`;
+    e.dataset.x = x;
+    e.dataset.y = y;
+  }
+
+  // 把实体元素位置同步到逻辑状态
+  function syncEntities(instant = false) {
+    const cell = parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--cell"));
+    const p = $("player");
+    if (!p) return;
+    if (instant) {
+      p.style.transition = "none";
+      requestAnimationFrame(() => (p.style.transition = ""));
+    }
+    p.className = "dir-" + state.facing;
+    place(p, state.player % state.cols, Math.floor(state.player / state.cols));
+
+    for (const [k, boxEl] of state.boxEls) {
+      if (instant) {
+        boxEl.style.transition = "none";
+        requestAnimationFrame(() => (boxEl.style.transition = ""));
+      }
+      place(boxEl, k % state.cols, Math.floor(k / state.cols));
+      boxEl.classList.toggle("on-goal", state.goals.has(k));
+    }
+  }
+
+  /* ---------- 移动逻辑 ---------- */
+  function move(dir) {
+    if (state.done || !$("win-overlay").classList.contains("hidden")) return;
+    const { dx, dy } = DIRS[dir];
+    state.facing = dir;
+
+    const px = state.player % state.cols, py = Math.floor(state.player / state.cols);
+    const tx = px + dx, ty = py + dy;
+    const tk = key(tx, ty);
+
+    if (state.walls.has(tk)) { Sound.blocked(); syncEntities(); return; }
+
+    if (state.boxes.has(tk)) {
+      const bk = key(tx + dx, ty + dy);
+      if (state.walls.has(bk) || state.boxes.has(bk)) { Sound.blocked(); syncEntities(); return; }
+    }
+
+    state.history.push({
+      player: state.player,
+      boxes: [...state.boxes],
+      moves: state.moves,
+      pushes: state.pushes,
+    });
+    if (state.history.length > 500) state.history.shift();
+
+    let pushed = false;
+    if (state.boxes.has(tk)) {
+      const bk = key(tx + dx, ty + dy);
+      state.boxes.delete(tk);
+      state.boxes.add(bk);
+      // DOM 元素跟随箱子换位置
+      const boxEl = state.boxEls.get(tk);
+      state.boxEls.delete(tk);
+      state.boxEls.set(bk, boxEl);
+      pushed = true;
+      Sound.push();
+    } else {
+      Sound.move();
+    }
+
+    state.player = tk;
+    state.moves++;
+    if (pushed) state.pushes++;
+
+    syncEntities();
+    updateHud();
+
+    if (isWin()) onWin();
+  }
+
+  function isWin() {
+    for (const b of state.boxes) if (!state.goals.has(b)) return false;
+    return true;
+  }
+
+  function undo() {
+    const snap = state.history.pop();
+    if (!snap) return;
+    state.player = snap.player;
+    state.boxes = new Set(snap.boxes);
+    state.moves = snap.moves;
+    state.pushes = snap.pushes;
+    rebuildBoxEls();
+    syncEntities();
+    updateHud();
+  }
+
+  // 撤销后箱子 DOM 顺序可能变化，整体重建映射
+  function rebuildBoxEls() {
+    const old = new Map(state.boxEls);
+    state.boxEls = new Map();
+    for (const k of state.boxes) {
+      state.boxEls.set(k, old.get(k) || (() => {
+        const b = el("div", "box");
+        b.appendChild(el("div", "inner"));
+        board.appendChild(b);
+        return b;
+      })());
+    }
+    for (const [k, e] of old) if (!state.boxes.has(k)) e.remove();
+  }
+
+  /* ---------- HUD 与记录 ---------- */
+  function updateHud() {
+    $("moves").textContent = state.moves;
+    $("pushes").textContent = state.pushes;
+    const best = store.get("sokoban.best", {})[state.idx];
+    $("best").textContent = best ? `${best.m} 步` : "—";
+  }
+
+  function onWin() {
+    state.done = true;
+    Sound.win();
+
+    const bests = store.get("sokoban.best", {});
+    const prev = bests[state.idx];
+    const isRecord = !prev || state.moves < prev.m;
+    if (isRecord) {
+      bests[state.idx] = { m: state.moves, p: state.pushes };
+      store.set("sokoban.best", bests);
+    }
+    const doneSet = new Set(store.get("sokoban.done", []));
+    doneSet.add(state.idx);
+    store.set("sokoban.done", [...doneSet]);
+
+    $("win-detail").textContent = `用 ${state.moves} 步，推动 ${state.pushes} 次`;
+    $("win-best").textContent = isRecord ? "🏆 新纪录！" : `本关最佳：${bests[state.idx].m} 步`;
+    const isLast = state.idx === LEVELS.length - 1;
+    $("btn-next").textContent = isLast ? "回到第 1 关 ↺" : "下一关 →";
+
+    updateHud();
+    setTimeout(() => $("win-overlay").classList.remove("hidden"), 350);
+  }
+
+  function nextLevel() {
+    $("win-overlay").classList.add("hidden");
+    loadLevel((state.idx + 1) % LEVELS.length);
+  }
+
+  /* ---------- 选关弹窗 ---------- */
+  function openLevelModal() {
+    const grid = $("level-grid");
+    grid.innerHTML = "";
+    const doneSet = new Set(store.get("sokoban.done", []));
+    LEVELS.forEach((lv, i) => {
+      const b = el("button", "lv" + (doneSet.has(i) ? " done" : "") + (i === state.idx ? " cur" : ""));
+      b.innerHTML = `${i + 1}<small>${lv.name}</small>`;
+      b.title = doneSet.has(i) ? "已通关" : "未通关";
+      b.addEventListener("click", () => {
+        $("level-modal").classList.add("hidden");
+        loadLevel(i);
+      });
+      grid.appendChild(b);
+    });
+    $("level-modal").classList.remove("hidden");
+  }
+
+  /* ---------- 输入 ---------- */
+  document.addEventListener("keydown", (e) => {
+    if (e.repeat && (e.key === "z" || e.key === "Z")) return;
+    const k = e.key.toLowerCase();
+    const dirMap = {
+      arrowup: "up", w: "up",
+      arrowdown: "down", s: "down",
+      arrowleft: "left", a: "left",
+      arrowright: "right", d: "right",
+    };
+    if (dirMap[k]) { e.preventDefault(); move(dirMap[k]); return; }
+    if (k === "z" || e.key === "Backspace") { e.preventDefault(); undo(); return; }
+    if (k === "r") { loadLevel(state.idx); return; }
+    if (k === "enter" && !$("win-overlay").classList.contains("hidden")) { nextLevel(); return; }
+    if (e.key === "Escape") {
+      $("level-modal").classList.add("hidden");
+      $("win-overlay").classList.add("hidden");
+    }
+  });
+
+  $("board-wrap").addEventListener("touchstart", (e) => {
+    const t = e.changedTouches[0];
+    board._sx = t.clientX; board._sy = t.clientY;
+  }, { passive: true });
+
+  $("board-wrap").addEventListener("touchend", (e) => {
+    const t = e.changedTouches[0];
+    const dx = t.clientX - board._sx, dy = t.clientY - board._sy;
+    if (Math.max(Math.abs(dx), Math.abs(dy)) < 24) return;
+    move(Math.abs(dx) > Math.abs(dy) ? (dx > 0 ? "right" : "left") : (dy > 0 ? "down" : "up"));
+  }, { passive: true });
+
+  document.querySelectorAll("#dpad .dp").forEach((b) => {
+    b.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      move(b.dataset.dir);
+    });
+  });
+
+  $("btn-undo").addEventListener("click", undo);
+  $("btn-reset").addEventListener("click", () => loadLevel(state.idx));
+  $("btn-levels").addEventListener("click", openLevelModal);
+  $("btn-close-levels").addEventListener("click", () => $("level-modal").classList.add("hidden"));
+  $("btn-replay").addEventListener("click", () => {
+    $("win-overlay").classList.add("hidden");
+    loadLevel(state.idx);
+  });
+  $("btn-next").addEventListener("click", nextLevel);
+
+  const soundBtn = $("btn-sound");
+  function syncSoundBtn() {
+    soundBtn.textContent = Sound.enabled ? "🔊" : "🔇";
+  }
+  soundBtn.addEventListener("click", () => {
+    Sound.enabled = !Sound.enabled;
+    store.set("sokoban.sound", Sound.enabled);
+    syncSoundBtn();
+  });
+  syncSoundBtn();
+
+  window.addEventListener("resize", () => {
+    fitBoard();
+    render();
+  });
+
+  /* ---------- 启动：恢复上次进度 ---------- */
+  const saved = store.get("sokoban.progress", 0);
+  loadLevel(Number.isInteger(saved) && saved >= 0 && saved < LEVELS.length ? saved : 0);
+})();
+  </script>
+</body>
+</html>

@@ -19,6 +19,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ├── project3/          ← 俄罗斯方块 · Tetris
 │   ├── tetris.html    ← 经典俄罗斯方块（Canvas，单文件）
 │   └── README.md      ← 项目说明
+├── project4/          ← 推箱子 · Sokoban
+│   ├── sokoban.html   ← 经典推箱子（DOM 网格渲染，单文件）
+│   └── README.md      ← 项目说明
 ├── CLAUDE.md          ← 本文件
 └── .gitignore
 ```
@@ -58,6 +61,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 键盘操作 + 移动端触控按钮，暂停/重开
 - localStorage 持久化最高分
 
+### project4 — 推箱子 · Sokoban
+
+经典规则推箱子解谜游戏：
+- 10 个手工关卡（入门 → 环形仓库），全部经 BFS 求解器验证可解
+- 撤销/重玩、每关最佳步数与通关进度持久化（localStorage）
+- WebAudio 合成音效，移动端滑动 + 虚拟方向键
+- DOM 网格渲染（非 Canvas），CSS 过渡动画
+
 ## 常用命令
 
 ```bash
@@ -67,6 +78,8 @@ start project1/contactv1.html
 start project2/gomoku.html
 # 打开俄罗斯方块
 start project3/tetris.html
+# 打开推箱子
+start project4/sokoban.html
 ```
 
 ## 通用代码模式
