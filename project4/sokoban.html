@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-  <meta name="description" content="推箱子 Sokoban —— 一个纯前端实现的经典推箱子小游戏，含 10 个关卡、撤销、选关与最佳记录。">
+  <meta name="description" content="推箱子 Sokoban —— 一个纯前端实现的经典推箱子小游戏，含 18 个关卡、星级评价、顺序解锁、死锁提示、撤销与最佳记录。">
   <title>推箱子 · Sokoban</title>
   <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📦</text></svg>">
 <style>
@@ -256,6 +256,43 @@ main {
 .dialog-actions { display: flex; gap: 10px; justify-content: center; margin-top: 18px; }
 .muted { color: var(--muted); font-size: 0.85rem; }
 
+/* 星级评价 */
+.stars { font-size: 1.7rem; letter-spacing: 6px; margin: 2px 0 6px; line-height: 1; }
+.stars .on  { color: var(--accent); text-shadow: 0 0 12px rgba(255, 181, 71, 0.5); }
+.stars .off { color: rgba(255, 255, 255, 0.14); }
+
+/* 死锁提示条 */
+#deadlock-toast {
+  position: fixed;
+  top: 78px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(224, 82, 82, 0.94);
+  color: #fff;
+  padding: 8px 18px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  z-index: 40;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  display: none;
+  white-space: nowrap;
+}
+#deadlock-toast.show { display: block; animation: pop-in 0.2s ease-out; }
+
+/* 选关：星级角标与锁定态 */
+#level-grid .lv .st { position: absolute; top: 4px; right: 6px; font-size: 0.62rem; color: var(--accent); }
+#level-grid .lv.locked { opacity: 0.45; cursor: not-allowed; }
+#link-unlock {
+  display: inline-block;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-decoration: underline;
+  margin-top: 4px;
+}
+#link-unlock:hover { color: var(--text); background: none; }
+
 #level-grid {
   display: grid;
   grid-template-columns: repeat(5, 56px);
@@ -330,6 +367,7 @@ footer.hint {
     <div class="dialog">
       <div class="dialog-emoji">🎉</div>
       <h2>通关！</h2>
+      <div class="stars" id="win-stars"></div>
       <p id="win-detail">用 12 步，推动 3 次</p>
       <p id="win-best" class="muted"></p>
       <div class="dialog-actions">
@@ -344,11 +382,15 @@ footer.hint {
     <div class="dialog">
       <h2>选择关卡</h2>
       <div id="level-grid"></div>
+      <button id="link-unlock">解锁全部关卡</button>
       <div class="dialog-actions">
         <button id="btn-close-levels" class="primary">关闭</button>
       </div>
     </div>
   </div>
+
+  <!-- 死锁提示 -->
+  <div id="deadlock-toast">⚠ 疑似死锁：箱子卡进角落 · Z 撤销 / R 重玩</div>
 
   <footer class="hint">方向键 / WASD 移动 · Z 撤销 · R 重玩 · 手机可滑动或使用方向键</footer>
 
@@ -357,16 +399,15 @@ footer.hint {
  * 关卡数据 —— 标准 Sokoban 字符表示：
  *   '#' 墙        ' ' 地板
  *   '@' 玩家      '+' 玩家（站在目标点上）
- *   '
-</body>
-</html>
- 箱子      '*' 箱子（已在目标点上）
+ *   '$' 箱子      '*' 箱子（已在目标点上）
  *   '.' 目标点
- * 每关箱子数必须等于目标点数。所有关卡均由 tools/verify-levels.js 求解验证可通。
+ * 每关箱子数必须等于目标点数。所有关卡均由 tools/verify-levels.js 求解验证可通，
+ * par 为求解器算出的最少步数（星级评价的基准）。
  */
 const LEVELS = [
   {
     name: "入门",
+    par: 1,
     map: `
 #######
 #     #
@@ -376,6 +417,7 @@ const LEVELS = [
   },
   {
     name: "第一步",
+    par: 1,
     map: `
 #######
 #  .  #
@@ -386,16 +428,18 @@ const LEVELS = [
   },
   {
     name: "成对",
+    par: 4,
     map: `
 ########
 #  ..  #
-#  $  #
+#  $$  #
 #  @   #
 #      #
 ########`,
   },
   {
     name: "绕墙",
+    par: 19,
     map: `
 ########
 #      #
@@ -407,10 +451,11 @@ const LEVELS = [
   },
   {
     name: "分流",
+    par: 15,
     map: `
 ########
 #   .  #
-# $   #
+# $  $ #
 #   @  #
 #  .   #
 #      #
@@ -418,6 +463,7 @@ const LEVELS = [
   },
   {
     name: "十字路",
+    par: 14,
     map: `
 #########
 #       #
@@ -429,6 +475,7 @@ const LEVELS = [
   },
   {
     name: "中庭",
+    par: 29,
     map: `
 #########
 #       #
@@ -440,6 +487,7 @@ const LEVELS = [
   },
   {
     name: "回廊",
+    par: 12,
     map: `
 #########
 #   #   #
@@ -451,18 +499,20 @@ const LEVELS = [
   },
   {
     name: "对称",
+    par: 15,
     map: `
 ########
 #      #
 # $  $ #
 # .  . #
-#  $  #
-#  +.  #
+#  $   #
+#  +   #
 #      #
 ########`,
   },
   {
     name: "环形仓库",
+    par: 45,
     map: `
 ########
 #  ..  #
@@ -472,6 +522,100 @@ const LEVELS = [
 # $  $ #
 #  @   #
 ########`,
+  },
+  {
+    name: "回字阵",
+    par: 8,
+    map: `
+#########
+#       #
+#  ###  #
+#  #. # #
+#  #$ # #
+#  #  # #
+# $  .  #
+#  @    #
+#########`,
+  },
+  {
+    name: "并肩",
+    par: 12,
+    map: `
+########
+#      #
+# .$$. #
+#      #
+#  @   #
+########`,
+  },
+  {
+    name: "接力",
+    par: 24,
+    map: `
+##########
+#        #
+#  $ $ $ #
+#        #
+#  ...   #
+#    @   #
+##########`,
+  },
+  {
+    name: "三岔口",
+    par: 14,
+    map: `
+########
+#      #
+# $.$  #
+#  .   #
+# $@.  #
+#      #
+########`,
+  },
+  {
+    name: "十字路口",
+    par: 15,
+    map: `
+#########
+#       #
+#  ...  #
+#  $.$  #
+# $ $   #
+#   @   #
+#########`,
+  },
+  {
+    name: "仓库一角",
+    par: 15,
+    map: `
+########
+#   ...#
+#  $$$ #
+# @    #
+########`,
+  },
+  {
+    name: "连锁反应",
+    par: 20,
+    map: `
+##########
+#        #
+#  @     #
+# $$$$   #
+#  ....  #
+#        #
+##########`,
+  },
+  {
+    name: "仓储中心",
+    par: 17,
+    map: `
+##########
+#   ..   #
+#  $..$  #
+#   $$   #
+#   @    #
+##########`,
   },
 ];
 
@@ -578,6 +722,7 @@ if (typeof module !== "undefined" && module.exports) {
     fitBoard();
     render();
     updateHud();
+    updateDeadlockBanner();
     $("level-name").textContent = `第 ${idx + 1} 关 · ${LEVELS[idx].name}`;
   }
 
@@ -691,6 +836,7 @@ if (typeof module !== "undefined" && module.exports) {
   function move(dir) {
     if (state.done || !$("win-overlay").classList.contains("hidden")) return;
     const { dx, dy } = DIRS[dir];
+    const prevFacing = state.facing;
     state.facing = dir;
 
     const px = state.player % state.cols, py = Math.floor(state.player / state.cols);
@@ -709,6 +855,7 @@ if (typeof module !== "undefined" && module.exports) {
       boxes: [...state.boxes],
       moves: state.moves,
       pushes: state.pushes,
+      facing: prevFacing,
     });
     if (state.history.length > 500) state.history.shift();
 
@@ -733,6 +880,7 @@ if (typeof module !== "undefined" && module.exports) {
 
     syncEntities();
     updateHud();
+    updateDeadlockBanner();
 
     if (isWin()) onWin();
   }
@@ -742,6 +890,24 @@ if (typeof module !== "undefined" && module.exports) {
     return true;
   }
 
+  /* ---------- 死锁检测（简化：非目标点角落） ---------- */
+  function isCornerDeadlock(k) {
+    if (state.goals.has(k)) return false;
+    const x = k % state.cols, y = Math.floor(k / state.cols);
+    const w = (xx, yy) => xx < 0 || yy < 0 || xx >= state.cols || yy >= state.rows || state.walls.has(key(xx, yy));
+    return (w(x - 1, y) || w(x + 1, y)) && (w(x, y - 1) || w(x, y + 1));
+  }
+
+  function updateDeadlockBanner() {
+    let dead = false;
+    if (!state.done) {
+      for (const b of state.boxes) {
+        if (isCornerDeadlock(b)) { dead = true; break; }
+      }
+    }
+    $("deadlock-toast").classList.toggle("show", dead);
+  }
+
   function undo() {
     const snap = state.history.pop();
     if (!snap) return;
@@ -749,9 +915,11 @@ if (typeof module !== "undefined" && module.exports) {
     state.boxes = new Set(snap.boxes);
     state.moves = snap.moves;
     state.pushes = snap.pushes;
+    state.facing = snap.facing || state.facing;
     rebuildBoxEls();
     syncEntities();
     updateHud();
+    updateDeadlockBanner();
   }
 
   // 撤销后箱子 DOM 顺序可能变化，整体重建映射
@@ -774,25 +942,45 @@ if (typeof module !== "undefined" && module.exports) {
     $("moves").textContent = state.moves;
     $("pushes").textContent = state.pushes;
     const best = store.get("sokoban.best", {})[state.idx];
-    $("best").textContent = best ? `${best.m} 步` : "—";
+    $("best").textContent = best
+      ? `${best.m} 步${best.stars ? " " + "★".repeat(best.stars) : ""}`
+      : "—";
+  }
+
+  /** 星级：以求解器最少步数 par 为基准 */
+  function calcStars(moves, par) {
+    if (!par) return 3;
+    if (moves <= Math.ceil(par * 1.2)) return 3;
+    if (moves <= Math.ceil(par * 1.6)) return 2;
+    return 1;
+  }
+
+  function starHtml(n) {
+    return `<span class="on">${"★".repeat(n)}</span><span class="off">${"★".repeat(3 - n)}</span>`;
   }
 
   function onWin() {
     state.done = true;
     Sound.win();
+    updateDeadlockBanner();
 
+    const par = LEVELS[state.idx].par;
+    const stars = calcStars(state.moves, par);
     const bests = store.get("sokoban.best", {});
     const prev = bests[state.idx];
     const isRecord = !prev || state.moves < prev.m;
-    if (isRecord) {
-      bests[state.idx] = { m: state.moves, p: state.pushes };
-      store.set("sokoban.best", bests);
-    }
+    bests[state.idx] = {
+      m: isRecord ? state.moves : prev.m,
+      p: isRecord ? state.pushes : prev.p,
+      stars: Math.max((prev && prev.stars) || 0, stars),
+    };
+    store.set("sokoban.best", bests);
     const doneSet = new Set(store.get("sokoban.done", []));
     doneSet.add(state.idx);
     store.set("sokoban.done", [...doneSet]);
 
-    $("win-detail").textContent = `用 ${state.moves} 步，推动 ${state.pushes} 次`;
+    $("win-stars").innerHTML = starHtml(stars);
+    $("win-detail").textContent = `用 ${state.moves} 步（参考 ${par} 步），推动 ${state.pushes} 次`;
     $("win-best").textContent = isRecord ? "🏆 新纪录！" : `本关最佳：${bests[state.idx].m} 步`;
     const isLast = state.idx === LEVELS.length - 1;
     $("btn-next").textContent = isLast ? "回到第 1 关 ↺" : "下一关 →";
@@ -807,20 +995,35 @@ if (typeof module !== "undefined" && module.exports) {
   }
 
   /* ---------- 选关弹窗 ---------- */
+  function isUnlocked(i) {
+    if (i === 0) return true;
+    const doneSet = new Set(store.get("sokoban.done", []));
+    return doneSet.has(i) || doneSet.has(i - 1) || store.get("sokoban.unlockAll", false);
+  }
+
   function openLevelModal() {
     const grid = $("level-grid");
     grid.innerHTML = "";
     const doneSet = new Set(store.get("sokoban.done", []));
+    const bests = store.get("sokoban.best", {});
     LEVELS.forEach((lv, i) => {
-      const b = el("button", "lv" + (doneSet.has(i) ? " done" : "") + (i === state.idx ? " cur" : ""));
-      b.innerHTML = `${i + 1}<small>${lv.name}</small>`;
-      b.title = doneSet.has(i) ? "已通关" : "未通关";
+      const unlocked = isUnlocked(i);
+      const stars = (bests[i] && bests[i].stars) || 0;
+      const b = el("button", "lv" + (doneSet.has(i) ? " done" : "") + (i === state.idx ? " cur" : "") + (unlocked ? "" : " locked"));
+      b.innerHTML = (unlocked ? i + 1 : "🔒") +
+        (stars ? `<span class="st">${"★".repeat(stars)}</span>` : "") +
+        `<small>${lv.name}</small>`;
+      b.title = unlocked
+        ? `第 ${i + 1} 关 · ${lv.name}${lv.par ? `（参考 ${lv.par} 步）` : ""}`
+        : "先通关上一关解锁";
       b.addEventListener("click", () => {
+        if (!unlocked) return;
         $("level-modal").classList.add("hidden");
         loadLevel(i);
       });
       grid.appendChild(b);
     });
+    $("link-unlock").style.display = store.get("sokoban.unlockAll", false) ? "none" : "inline-block";
     $("level-modal").classList.remove("hidden");
   }
 
@@ -867,6 +1070,10 @@ if (typeof module !== "undefined" && module.exports) {
   $("btn-reset").addEventListener("click", () => loadLevel(state.idx));
   $("btn-levels").addEventListener("click", openLevelModal);
   $("btn-close-levels").addEventListener("click", () => $("level-modal").classList.add("hidden"));
+  $("link-unlock").addEventListener("click", () => {
+    store.set("sokoban.unlockAll", true);
+    openLevelModal();
+  });
   $("btn-replay").addEventListener("click", () => {
     $("win-overlay").classList.add("hidden");
     loadLevel(state.idx);
