@@ -1,0 +1,938 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="description" content="数独 Sudoku —— 一个纯前端实现的经典数独游戏，谜题由生成器实时生成且保证唯一解，含三档难度、笔记、提示、撤销与最佳记录。">
+  <title>数独 · Sudoku</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔢</text></svg>">
+<style>
+/* ============ 基础 ============ */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --cell: min(52px, calc((100vh - 210px) / 9));
+  --bg1: #141b2e;
+  --bg2: #0c1120;
+  --panel: rgba(255, 255, 255, 0.06);
+  --panel-border: rgba(255, 255, 255, 0.12);
+  --accent: #ffb547;
+  --accent2: #4ade80;
+  --blue: #5cd6ff;
+  --danger: #f87171;
+  --text: #e8ecf4;
+  --muted: #93a0b8;
+  font-size: 16px;
+}
+
+@supports (height: 100dvh) {
+  :root { --cell: min(52px, calc((100dvh - 210px) / 9)); }
+}
+
+html, body { height: 100%; }
+
+body {
+  font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
+  color: var(--text);
+  background:
+    radial-gradient(1200px 600px at 20% -10%, #233254 0%, transparent 60%),
+    radial-gradient(900px 500px at 110% 110%, #2b1f4a 0%, transparent 55%),
+    linear-gradient(160deg, var(--bg1), var(--bg2));
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  overflow-x: hidden;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+/* ============ 顶栏 ============ */
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 12px 20px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--panel-border);
+  backdrop-filter: blur(8px);
+}
+
+.topbar h1 { font-size: 1.25rem; letter-spacing: 1px; white-space: nowrap; }
+
+.level-info { font-size: 0.95rem; color: var(--accent); font-weight: 600; }
+
+.stats { display: flex; gap: 14px; font-size: 0.9rem; color: var(--muted); }
+.stats b { color: var(--text); font-variant-numeric: tabular-nums; }
+
+.actions { display: flex; gap: 8px; margin-left: auto; flex-wrap: wrap; }
+
+button {
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid var(--panel-border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+  transition: background 0.15s, transform 0.05s, opacity 0.15s;
+  user-select: none;
+}
+button:hover { background: rgba(255, 255, 255, 0.16); }
+button:active { transform: scale(0.96); }
+button:disabled { opacity: 0.35; cursor: not-allowed; }
+button.primary { background: var(--accent); border-color: transparent; color: #231a06; font-weight: 700; }
+button.primary:hover { filter: brightness(1.08); }
+button.active { background: var(--blue); border-color: transparent; color: #06101c; font-weight: 700; }
+
+/* ============ 主区域 ============ */
+main {
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 22px;
+  padding: 20px 16px;
+  flex-wrap: wrap;
+}
+
+#board-wrap {
+  position: relative;
+  padding: 10px;
+  border-radius: 16px;
+  background: rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--panel-border);
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+#board {
+  display: grid;
+  grid-template-columns: repeat(9, var(--cell));
+  grid-template-rows: repeat(9, var(--cell));
+  background: #10182c;
+  border: 3px solid #3a4a6e;
+  border-radius: 6px;
+  overflow: hidden;
+  transition: filter 0.2s;
+}
+#board.blurred { filter: blur(8px); }
+
+.cell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  font-size: 1.35rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  border-right: 1px solid rgba(255, 255, 255, 0.10);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.cell.b-right { border-right: 3px solid #3a4a6e; }
+.cell.b-bottom { border-bottom: 3px solid #3a4a6e; }
+
+.cell.given { color: var(--text); }
+.cell.user { color: var(--blue); }
+.cell.hinted { color: var(--accent2); }
+
+.cell.peer { background: rgba(92, 214, 255, 0.06); }
+.cell.same { background: rgba(92, 214, 255, 0.18); }
+.cell.selected { background: rgba(255, 181, 71, 0.22); box-shadow: inset 0 0 0 2px var(--accent); }
+.cell.conflict { color: var(--danger) !important; background: rgba(248, 113, 113, 0.14); }
+
+.cell .notes {
+  position: absolute;
+  inset: 2px;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
+}
+.cell .notes span {
+  display: grid;
+  place-items: center;
+  font-size: 0.58rem;
+  font-weight: 500;
+  color: var(--muted);
+  line-height: 1;
+}
+
+/* ============ 侧栏 ============ */
+.side {
+  width: 240px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+.panel .label {
+  font-size: 0.72rem;
+  color: var(--muted);
+  letter-spacing: 2px;
+  margin-bottom: 8px;
+}
+
+.diff-row { display: flex; gap: 6px; }
+.diff-row button { flex: 1; padding: 7px 0; font-size: 0.85rem; }
+.diff-row button.active { background: var(--accent); color: #231a06; font-weight: 700; }
+
+#numgrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+#numgrid button {
+  position: relative;
+  aspect-ratio: 1.35;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: var(--blue);
+}
+#numgrid button .count {
+  position: absolute;
+  top: 3px;
+  right: 5px;
+  font-size: 0.6rem;
+  font-weight: 400;
+  color: var(--muted);
+}
+#numgrid button.done { opacity: 0.28; }
+#numgrid button.erase { color: var(--danger); font-size: 1rem; }
+
+.keys { font-size: 0.72rem; color: var(--muted); line-height: 2; }
+.keys b {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--panel-border);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-weight: 600;
+  margin-right: 4px;
+}
+
+/* ============ 弹窗 ============ */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  background: rgba(8, 10, 20, 0.78);
+  backdrop-filter: blur(4px);
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+}
+.overlay.hidden { display: none; }
+
+.dialog {
+  text-align: center;
+  animation: pop-in 0.22s ease-out;
+  padding: 16px;
+}
+.dialog-emoji { font-size: 2.6rem; }
+.dialog h2 { margin: 6px 0 8px; letter-spacing: 2px; }
+.dialog .detail { color: var(--text); font-size: 0.95rem; line-height: 1.8; }
+.dialog .muted { color: var(--muted); font-size: 0.82rem; margin-top: 4px; }
+.dialog-actions { display: flex; gap: 10px; justify-content: center; margin-top: 16px; }
+
+@keyframes pop-in {
+  from { transform: scale(0.85); opacity: 0; }
+  to   { transform: scale(1);    opacity: 1; }
+}
+
+footer.hint {
+  text-align: center;
+  padding: 10px;
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+/* ============ 窄屏适配 ============ */
+@media (max-width: 760px) {
+  :root {
+    /* 手机竖屏：顶栏 + 数字面板 + 难度面板都要占空间 */
+    --cell: min(9.2vw, 40px, calc((100vh - 340px) / 9));
+  }
+  @supports (height: 100dvh) {
+    :root { --cell: min(9.2vw, 40px, calc((100dvh - 340px) / 9)); }
+  }
+  main { flex-direction: column; align-items: center; gap: 14px; }
+  .side { width: min(92vw, 360px); }
+  .topbar { gap: 10px; padding: 10px 12px; }
+  .actions { margin-left: 0; }
+  .actions button { padding: 5px 9px; font-size: 0.82rem; }
+  .cell { font-size: 1.05rem; }
+}
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <h1>🔢 数独</h1>
+    <div class="level-info"><span id="diff-label">简单</span></div>
+    <div class="stats">
+      <span>用时 <b id="time">0:00</b></span>
+      <span>最佳 <b id="best">—</b></span>
+      <span>提示 <b id="hints">3</b></span>
+    </div>
+    <div class="actions">
+      <button id="btn-note" title="笔记模式 (N)">✏ 笔记</button>
+      <button id="btn-erase" title="擦除 (Del)">⌫ 擦除</button>
+      <button id="btn-hint" title="提示 (H)">💡 提示</button>
+      <button id="btn-undo" title="撤销 (Z)">↩ 撤销</button>
+      <button id="btn-pause" title="暂停 (P)">⏸ 暂停</button>
+      <button id="btn-new" class="primary" title="开新局">✚ 新局</button>
+      <button id="btn-sound" title="音效开关">🔊</button>
+    </div>
+  </header>
+
+  <main>
+    <div id="board-wrap">
+      <div id="board" aria-label="数独棋盘"></div>
+
+      <!-- 暂停弹窗 -->
+      <div id="pause-overlay" class="overlay hidden">
+        <div class="dialog">
+          <div class="dialog-emoji">⏸</div>
+          <h2>暂停中</h2>
+          <div class="dialog-actions">
+            <button id="btn-resume" class="primary">继续</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- 通关弹窗 -->
+      <div id="win-overlay" class="overlay hidden">
+        <div class="dialog">
+          <div class="dialog-emoji">🎉</div>
+          <h2>通关！</h2>
+          <p class="detail" id="win-detail"></p>
+          <p class="muted" id="win-best"></p>
+          <div class="dialog-actions">
+            <button id="btn-again" class="primary">再来一局</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <aside class="side">
+      <div class="panel">
+        <div class="label">难度（点击开新局）</div>
+        <div class="diff-row">
+          <button data-diff="easy">简单</button>
+          <button data-diff="medium">中等</button>
+          <button data-diff="hard">困难</button>
+        </div>
+      </div>
+
+      <div class="panel">
+        <div class="label">数字</div>
+        <div id="numgrid"></div>
+      </div>
+
+      <div class="panel keys">
+        <b>1-9</b>填数 / 笔记<br>
+        <b>方向键</b>移动 <b>Del</b>擦除<br>
+        <b>N</b>笔记 <b>H</b>提示 <b>Z</b>撤销<br>
+        <b>P</b>暂停
+      </div>
+    </aside>
+  </main>
+
+  <footer class="hint">点击格子后填数 · 每行 / 每列 / 每宫 1-9 不重复 · 谜题实时生成且保证唯一解</footer>
+
+  <script>
+/**
+ * 求解器与生成器 —— 纯逻辑，与 UI 无关。
+ * 独立成块便于 Node 端验证（module.exports）。
+ */
+"use strict";
+
+/** (r,c) 能否填 d */
+function sudokuCanPlace(grid, r, c, d) {
+  for (let i = 0; i < 9; i++) {
+    if (grid[r][i] === d || grid[i][c] === d) return false;
+  }
+  const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+  for (let y = br; y < br + 3; y++)
+    for (let x = bc; x < bc + 3; x++)
+      if (grid[y][x] === d) return false;
+  return true;
+}
+
+/** 找候选数最少的空格（MRV，加速求解与计数） */
+function sudokuFindBest(grid) {
+  let best = null, bestCands = null;
+  for (let r = 0; r < 9; r++) {
+    for (let c = 0; c < 9; c++) {
+      if (grid[r][c]) continue;
+      const cands = [];
+      for (let d = 1; d <= 9; d++) if (sudokuCanPlace(grid, r, c, d)) cands.push(d);
+      if (cands.length === 0) return { r, c, cands };
+      if (!best || cands.length < bestCands.length) {
+        best = { r, c }; bestCands = cands;
+        if (cands.length === 1) return { r, c, cands };
+      }
+    }
+  }
+  return best ? { r: best.r, c: best.c, cands: bestCands } : null;
+}
+
+/** 解数统计（最多数到 limit 即停；返回值 >= limit 表示不止一个解） */
+function sudokuCountSolutions(input, limit) {
+  const grid = input.map((row) => row.slice());
+  let count = 0;
+  (function rec() {
+    if (count >= limit) return;
+    const cell = sudokuFindBest(grid);
+    if (!cell) { count++; return; }
+    for (const d of cell.cands) {
+      grid[cell.r][cell.c] = d;
+      rec();
+      grid[cell.r][cell.c] = 0;
+      if (count >= limit) return;
+    }
+  })();
+  return count;
+}
+
+/** 生成一个完整解（随机化回溯） */
+function sudokuGenerateSolved() {
+  const grid = Array.from({ length: 9 }, () => Array(9).fill(0));
+  (function rec(pos) {
+    if (pos === 81) return true;
+    const r = Math.floor(pos / 9), c = pos % 9;
+    const ds = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+    for (let i = ds.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [ds[i], ds[j]] = [ds[j], ds[i]];
+    }
+    for (const d of ds) {
+      if (sudokuCanPlace(grid, r, c, d)) {
+        grid[r][c] = d;
+        if (rec(pos + 1)) return true;
+        grid[r][c] = 0;
+      }
+    }
+    return false;
+  })(0);
+  return grid;
+}
+
+/**
+ * 挖洞生成谜题：随机顺序清空格子，每清一格都校验解仍唯一。
+ * clueTarget 是希望保留的提示数；若挖不到目标数则返回实际结果。
+ */
+function sudokuMakePuzzle(clueTarget) {
+  const solution = sudokuGenerateSolved();
+  const puzzle = solution.map((row) => row.slice());
+  const order = [];
+  for (let i = 0; i < 81; i++) order.push(i);
+  for (let i = order.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [order[i], order[j]] = [order[j], order[i]];
+  }
+  let remaining = 81;
+  for (const idx of order) {
+    if (remaining <= clueTarget) break;
+    const r = Math.floor(idx / 9), c = idx % 9;
+    const backup = puzzle[r][c];
+    puzzle[r][c] = 0;
+    if (sudokuCountSolutions(puzzle, 2) === 1) remaining--;
+    else puzzle[r][c] = backup;
+  }
+  return { puzzle, solution, clues: remaining };
+}
+
+// 供 Node 端验证脚本复用
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = { sudokuMakePuzzle, sudokuCountSolutions, sudokuGenerateSolved };
+}
+  </script>
+  <script>
+/* 数独 Sudoku —— 纯前端实现，无任何依赖 */
+(function () {
+  "use strict";
+
+  /* ---------- 工具 ---------- */
+  const $ = (id) => document.getElementById(id);
+  const store = {
+    get(key, fallback) {
+      try { return JSON.parse(localStorage.getItem(key)) ?? fallback; }
+      catch { return fallback; }
+    },
+    set(key, val) { localStorage.setItem(key, JSON.stringify(val)); },
+  };
+
+  /* ---------- 音效（WebAudio 合成） ---------- */
+  const Sound = {
+    enabled: store.get("sudoku.sound", true),
+    ctx: null,
+    play(freq, dur, type = "triangle", vol = 0.05) {
+      if (!this.enabled) return;
+      try {
+        this.ctx ??= new (window.AudioContext || window.webkitAudioContext)();
+        const t = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = type;
+        osc.frequency.value = freq;
+        gain.gain.setValueAtTime(vol, t);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+        osc.connect(gain).connect(this.ctx.destination);
+        osc.start(t);
+        osc.stop(t + dur);
+      } catch { /* 音频不可用时静默 */ }
+    },
+    place()  { this.play(520, 0.07, "triangle", 0.08); },
+    note()   { this.play(340, 0.05, "sine", 0.05); },
+    error()  { this.play(160, 0.14, "sawtooth", 0.05); },
+    hint()   { this.play(660, 0.12, "sine", 0.07, 880); },
+    win()    { [523, 659, 784, 1047].forEach((f, i) =>
+                setTimeout(() => this.play(f, 0.16, "triangle", 0.07), i * 110)); },
+  };
+
+  /* ---------- 常量与状态 ---------- */
+  const DIFFS = {
+    easy:   { name: "简单", clues: 40 },
+    medium: { name: "中等", clues: 31 },
+    hard:   { name: "困难", clues: 26 },
+  };
+
+  const boardEl = $("board");
+  const state = {
+    diff: "easy",
+    board: null,      // 当前盘面 9×9
+    solution: null,   // 唯一解
+    given: null,      // 提示格标记
+    hinted: null,     // 提示填入标记
+    notes: null,      // 9×9 Set
+    sel: null,        // {r,c}
+    noteMode: false,
+    history: [],      // {r, c, val, notes: Array<[d, has]>}
+    hints: 3,
+    seconds: 0,
+    timerId: null,
+    paused: false,
+    won: false,
+  };
+
+  const key = (r, c) => r * 9 + c;
+  const fmtTime = (s) => `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+
+  /* ---------- 棋盘构建 ---------- */
+  function buildBoard() {
+    boardEl.innerHTML = "";
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        const cell = document.createElement("div");
+        cell.className = "cell";
+        if (c === 2 || c === 5) cell.classList.add("b-right");
+        if (r === 2 || r === 5) cell.classList.add("b-bottom");
+        cell.dataset.r = r;
+        cell.dataset.c = c;
+        cell.addEventListener("click", () => {
+          state.sel = { r, c };
+          render();
+        });
+        boardEl.appendChild(cell);
+      }
+    }
+  }
+
+  /* ---------- 冲突检测 ---------- */
+  function computeConflicts() {
+    const conflicts = new Set();
+    const units = [];
+    for (let i = 0; i < 9; i++) {
+      const row = [], col = [];
+      for (let j = 0; j < 9; j++) { row.push(key(i, j)); col.push(key(j, i)); }
+      units.push(row, col);
+    }
+    for (let br = 0; br < 9; br += 3) {
+      for (let bc = 0; bc < 9; bc += 3) {
+        const box = [];
+        for (let y = br; y < br + 3; y++)
+          for (let x = bc; x < bc + 3; x++)
+            box.push(key(y, x));
+        units.push(box);
+      }
+    }
+    for (const unit of units) {
+      const seen = new Map();
+      for (const k of unit) {
+        const r = Math.floor(k / 9), c = k % 9;
+        const v = state.board[r][c];
+        if (!v) continue;
+        if (!seen.has(v)) seen.set(v, []);
+        seen.get(v).push(k);
+      }
+      for (const ks of seen.values()) {
+        if (ks.length > 1) ks.forEach((k) => conflicts.add(k));
+      }
+    }
+    return conflicts;
+  }
+
+  /* ---------- 渲染 ---------- */
+  function render() {
+    const conflicts = computeConflicts();
+    const sel = state.sel;
+    const selVal = sel ? state.board[sel.r][sel.c] : 0;
+
+    for (let r = 0; r < 9; r++) {
+      for (let c = 0; c < 9; c++) {
+        const cell = boardEl.children[key(r, c)];
+        const v = state.board[r][c];
+        const k = key(r, c);
+
+        cell.className = "cell";
+        if (c === 2 || c === 5) cell.classList.add("b-right");
+        if (r === 2 || r === 5) cell.classList.add("b-bottom");
+        if (state.given[r][c]) cell.classList.add("given");
+        else if (state.hinted[r][c]) cell.classList.add("hinted");
+        else if (v) cell.classList.add("user");
+        if (conflicts.has(k)) cell.classList.add("conflict");
+        if (sel) {
+          if (sel.r === r && sel.c === c) cell.classList.add("selected");
+          else if (sel.r === r || sel.c === c ||
+                   (Math.floor(sel.r / 3) === Math.floor(r / 3) &&
+                    Math.floor(sel.c / 3) === Math.floor(c / 3))) cell.classList.add("peer");
+          if (selVal && v === selVal) cell.classList.add("same");
+        }
+
+        if (v) {
+          cell.textContent = v;
+        } else {
+          cell.textContent = "";
+          const ns = state.notes[r][c];
+          if (ns.size) {
+            const wrap = document.createElement("div");
+            wrap.className = "notes";
+            for (let d = 1; d <= 9; d++) {
+              const s = document.createElement("span");
+              s.textContent = ns.has(d) ? d : "";
+              wrap.appendChild(s);
+            }
+            cell.appendChild(wrap);
+          }
+        }
+      }
+    }
+  }
+
+  /* ---------- HUD ---------- */
+  function updateHud() {
+    $("diff-label").textContent = DIFFS[state.diff].name;
+    $("time").textContent = fmtTime(state.seconds);
+    $("hints").textContent = state.hints;
+    $("btn-hint").disabled = state.hints <= 0 || state.won;
+    $("btn-undo").disabled = state.history.length === 0;
+    $("btn-note").classList.toggle("active", state.noteMode);
+    document.querySelectorAll(".diff-row button").forEach((b) => {
+      b.classList.toggle("active", b.dataset.diff === state.diff);
+    });
+
+    const best = store.get("sudoku.best", {})[state.diff];
+    $("best").textContent = best ? fmtTime(best) : "—";
+
+    // 数字按钮剩余计数
+    const placed = Array(10).fill(0);
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (state.board[r][c]) placed[state.board[r][c]]++;
+    document.querySelectorAll("#numgrid button[data-d]").forEach((b) => {
+      const d = +b.dataset.d;
+      const left = 9 - placed[d];
+      b.querySelector(".count").textContent = left;
+      b.classList.toggle("done", left <= 0);
+    });
+  }
+
+  /* ---------- 历史（撤销） ---------- */
+  function pushHistory(r, c) {
+    state.history.push({
+      r, c,
+      val: state.board[r][c],
+      notes: [...state.notes[r][c]],
+      hinted: state.hinted[r][c],
+    });
+    if (state.history.length > 300) state.history.shift();
+  }
+
+  function undo() {
+    if (state.won || state.paused) return;
+    const snap = state.history.pop();
+    if (!snap) return;
+    state.board[snap.r][snap.c] = snap.val;
+    state.notes[snap.r][snap.c] = new Set(snap.notes);
+    state.hinted[snap.r][snap.c] = snap.hinted;
+    Sound.note();
+    render();
+    updateHud();
+  }
+
+  /* ---------- 填数 / 笔记 / 擦除 ---------- */
+  function fill(r, c, d) {
+    if (state.won || state.paused) return;
+    if (state.given[r][c]) return;
+
+    if (state.noteMode) {
+      if (state.board[r][c]) return;
+      pushHistory(r, c);
+      const ns = state.notes[r][c];
+      if (ns.has(d)) ns.delete(d); else ns.add(d);
+      Sound.note();
+    } else {
+      pushHistory(r, c);
+      if (state.board[r][c] === d) {
+        state.board[r][c] = 0;             // 再按一次取消
+      } else {
+        state.board[r][c] = d;
+        state.notes[r][c].clear();
+        cleanPeerNotes(r, c, d);
+        Sound.place();
+        if (isConflicting(r, c)) Sound.error();
+      }
+      state.hinted[r][c] = state.hinted[r][c] && state.board[r][c] === d;
+    }
+    render();
+    updateHud();
+    checkWin();
+  }
+
+  /** 同行/列/宫的笔记里去掉 d */
+  function cleanPeerNotes(r, c, d) {
+    for (let i = 0; i < 9; i++) {
+      state.notes[r][i].delete(d);
+      state.notes[i][c].delete(d);
+    }
+    const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+    for (let y = br; y < br + 3; y++)
+      for (let x = bc; x < bc + 3; x++)
+        state.notes[y][x].delete(d);
+  }
+
+  function isConflicting(r, c) {
+    const v = state.board[r][c];
+    if (!v) return false;
+    for (let i = 0; i < 9; i++) {
+      if (i !== c && state.board[r][i] === v) return true;
+      if (i !== r && state.board[i][c] === v) return true;
+    }
+    const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+    for (let y = br; y < br + 3; y++)
+      for (let x = bc; x < bc + 3; x++)
+        if ((y !== r || x !== c) && state.board[y][x] === v) return true;
+    return false;
+  }
+
+  function erase(r, c) {
+    if (state.won || state.paused) return;
+    if (state.given[r][c]) return;
+    if (!state.board[r][c] && state.notes[r][c].size === 0) return;
+    pushHistory(r, c);
+    state.board[r][c] = 0;
+    state.notes[r][c].clear();
+    Sound.note();
+    render();
+    updateHud();
+  }
+
+  function eraseSelected() {
+    if (!state.sel) return;
+    erase(state.sel.r, state.sel.c);
+  }
+
+  /* ---------- 提示 ---------- */
+  function hint() {
+    if (state.won || state.paused || state.hints <= 0) return;
+    let target = state.sel;
+    if (!target || state.given[target.r][target.c] ||
+        (state.board[target.r][target.c] === state.solution[target.r][target.c])) {
+      // 未选中或已正确时，随机挑一个空格
+      const empties = [];
+      for (let r = 0; r < 9; r++)
+        for (let c = 0; c < 9; c++)
+          if (!state.board[r][c]) empties.push({ r, c });
+      if (!empties.length) return;
+      target = empties[Math.floor(Math.random() * empties.length)];
+    }
+    pushHistory(target.r, target.c);
+    const d = state.solution[target.r][target.c];
+    state.board[target.r][target.c] = d;
+    state.notes[target.r][target.c].clear();
+    state.hinted[target.r][target.c] = true;
+    cleanPeerNotes(target.r, target.c, d);
+    state.hints--;
+    state.sel = target;
+    Sound.hint();
+    render();
+    updateHud();
+    checkWin();
+  }
+
+  /* ---------- 胜负 ---------- */
+  function checkWin() {
+    for (let r = 0; r < 9; r++)
+      for (let c = 0; c < 9; c++)
+        if (state.board[r][c] !== state.solution[r][c]) return;
+    win();
+  }
+
+  function win() {
+    state.won = true;
+    stopTimer();
+    Sound.win();
+
+    const bests = store.get("sudoku.best", {});
+    const prev = bests[state.diff];
+    const isRecord = !prev || state.seconds < prev;
+    if (isRecord) {
+      bests[state.diff] = state.seconds;
+      store.set("sudoku.best", bests);
+    }
+
+    $("win-detail").textContent =
+      `${DIFFS[state.diff].name} · 用时 ${fmtTime(state.seconds)} · 提示 ${3 - state.hints} 次`;
+    $("win-best").textContent = isRecord ? "🏆 新纪录！" : `本难度最佳：${fmtTime(prev)}`;
+    $("win-overlay").classList.remove("hidden");
+    updateHud();
+  }
+
+  /* ---------- 计时 / 暂停 ---------- */
+  function startTimer() {
+    stopTimer();
+    state.timerId = setInterval(() => {
+      if (!state.paused && !state.won) {
+        state.seconds++;
+        updateHud();
+      }
+    }, 1000);
+  }
+  function stopTimer() {
+    if (state.timerId) { clearInterval(state.timerId); state.timerId = null; }
+  }
+
+  function togglePause() {
+    if (state.won) return;
+    state.paused = !state.paused;
+    $("pause-overlay").classList.toggle("hidden", !state.paused);
+    boardEl.classList.toggle("blurred", state.paused);
+    $("btn-pause").textContent = state.paused ? "▶ 继续" : "⏸ 暂停";
+  }
+
+  /* ---------- 新局 ---------- */
+  function newGame(diff) {
+    if (diff) state.diff = diff;
+    store.set("sudoku.settings", { diff: state.diff, sound: Sound.enabled });
+
+    const { puzzle, solution } = sudokuMakePuzzle(DIFFS[state.diff].clues);
+    state.board = puzzle.map((row) => row.slice());
+    state.solution = solution;
+    state.given = puzzle.map((row) => row.map((v) => v !== 0));
+    state.hinted = Array.from({ length: 9 }, () => Array(9).fill(false));
+    state.notes = Array.from({ length: 9 }, () => Array.from({ length: 9 }, () => new Set()));
+    state.sel = null;
+    state.history = [];
+    state.hints = 3;
+    state.seconds = 0;
+    state.won = false;
+    if (state.paused) togglePause();
+
+    $("win-overlay").classList.add("hidden");
+    buildBoard();
+    render();
+    startTimer();
+    updateHud();
+  }
+
+  /* ---------- 数字面板 ---------- */
+  function buildNumGrid() {
+    const grid = $("numgrid");
+    grid.innerHTML = "";
+    for (let d = 1; d <= 9; d++) {
+      const b = document.createElement("button");
+      b.dataset.d = d;
+      b.innerHTML = `${d}<span class="count">9</span>`;
+      b.addEventListener("click", () => {
+        if (state.sel) fill(state.sel.r, state.sel.c, d);
+      });
+      grid.appendChild(b);
+    }
+    const erase = document.createElement("button");
+    erase.className = "erase";
+    erase.textContent = "⌫ 擦除";
+    erase.addEventListener("click", eraseSelected);
+    grid.appendChild(erase);
+  }
+
+  /* ---------- 输入 ---------- */
+  document.addEventListener("keydown", (e) => {
+    const k = e.key;
+    if (k >= "1" && k <= "9") {
+      e.preventDefault();
+      if (state.sel) fill(state.sel.r, state.sel.c, +k);
+      return;
+    }
+    if (k === "Backspace" || k === "Delete" || k === "0") { e.preventDefault(); eraseSelected(); return; }
+    if (k === "n" || k === "N") { toggleNoteMode(); return; }
+    if (k === "z" || k === "Z") { e.preventDefault(); undo(); return; }
+    if (k === "h" || k === "H") { hint(); return; }
+    if (k === "p" || k === "P") { togglePause(); return; }
+    const dirMap = { ArrowUp: [-1, 0], ArrowDown: [1, 0], ArrowLeft: [0, -1], ArrowRight: [0, 1] };
+    if (dirMap[k]) {
+      e.preventDefault();
+      if (!state.sel) { state.sel = { r: 4, c: 4 }; }
+      else {
+        state.sel = {
+          r: Math.min(8, Math.max(0, state.sel.r + dirMap[k][0])),
+          c: Math.min(8, Math.max(0, state.sel.c + dirMap[k][1])),
+        };
+      }
+      render();
+    }
+  });
+
+  function toggleNoteMode() {
+    state.noteMode = !state.noteMode;
+    updateHud();
+  }
+
+  /* ---------- 按钮绑定 ---------- */
+  $("btn-note").addEventListener("click", toggleNoteMode);
+  $("btn-erase").addEventListener("click", eraseSelected);
+  $("btn-hint").addEventListener("click", hint);
+  $("btn-undo").addEventListener("click", undo);
+  $("btn-pause").addEventListener("click", togglePause);
+  $("btn-resume").addEventListener("click", togglePause);
+  $("btn-new").addEventListener("click", () => newGame());
+  $("btn-again").addEventListener("click", () => newGame());
+
+  document.querySelectorAll(".diff-row button").forEach((b) => {
+    b.addEventListener("click", () => newGame(b.dataset.diff));
+  });
+
+  const soundBtn = $("btn-sound");
+  function syncSoundBtn() { soundBtn.textContent = Sound.enabled ? "🔊" : "🔇"; }
+  soundBtn.addEventListener("click", () => {
+    Sound.enabled = !Sound.enabled;
+    store.set("sudoku.sound", Sound.enabled);
+    store.set("sudoku.settings", { diff: state.diff, sound: Sound.enabled });
+    syncSoundBtn();
+  });
+  syncSoundBtn();
+
+  /* ---------- 启动 ---------- */
+  const savedSettings = store.get("sudoku.settings", {});
+  if (DIFFS[savedSettings.diff]) state.diff = savedSettings.diff;
+  buildNumGrid();
+  newGame();
+})();
+  </script>
+</body>
+</html>
