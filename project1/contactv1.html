@@ -45,6 +45,14 @@
     red:   { main: '#e74c3c', light: '#f1948a', dark: '#c0392b' },
     blue:  { main: '#3498db', light: '#85c1e9', dark: '#2471a3' },
   };
+  // 兵种定义（经典模式 = 全员按突击兵 1 HP 处理）
+  const UNIT_CLASSES = {
+    assault: { name: '突击兵', hp: 1, radius: PLAYER_RADIUS,          energyMult: 1.0,  decayMult: 1.0  },
+    heavy:   { name: '重装兵', hp: 2, radius: PLAYER_RADIUS * 1.18,   energyMult: 0.8,  decayMult: 1.45 },
+    sniper:  { name: '狙击手', hp: 1, radius: PLAYER_RADIUS * 0.85,   energyMult: 1.35, decayMult: 0.55 },
+  };
+  const DIFFICULTIES = ['easy', 'normal', 'hard'];
+  const DIFF_LABELS = { easy: '简单', normal: '普通', hard: '困难' };
   const FIELD_COLOR = '#2d5a27';
   const FIELD_LINE_COLOR = '#3a7a33';
 
@@ -60,6 +68,7 @@
     charging: false,
     bullet: null,             // { x, y, vx, vy, energy, startX, startY, angle, team, unitId }
     deadTargets: [],          // [{ x, y, t }] 击杀特效
+    hitEffects: [],           // [{ x, y, t }] 命中（未击杀）特效
     gameOver: false,
     winner: null,
     turnCount: 0,
@@ -120,6 +129,32 @@
         { x: 870, y: 200, w: 80, h: 20 },
       ],
     },
+    bunker: {
+      name: '碉堡',
+      obstacles: [
+        { x: 520, y: 120, w: 160, h: 24 },
+        { x: 520, y: 656, w: 160, h: 24 },
+        { x: 300, y: 320, w: 24, h: 160 },
+        { x: 876, y: 320, w: 24, h: 160 },
+        { x: 560, y: 380, w: 80, h: 40 },
+        { x: 140, y: 80, w: 24, h: 120 },
+        { x: 1036, y: 600, w: 24, h: 120 },
+      ],
+    },
+    armory: {
+      name: '军械库',
+      obstacles: [
+        { x: 240, y: 160, w: 120, h: 20 },
+        { x: 240, y: 160, w: 20, h: 100 },
+        { x: 840, y: 620, w: 120, h: 20 },
+        { x: 940, y: 540, w: 20, h: 100 },
+        { x: 520, y: 300, w: 160, h: 20 },
+        { x: 520, y: 480, w: 160, h: 20 },
+        { x: 380, y: 520, w: 20, h: 120 },
+        { x: 800, y: 160, w: 20, h: 120 },
+        { x: 560, y: 390, w: 80, h: 20 },
+      ],
+    },
   };
 
   // 按钮尺寸
@@ -130,7 +165,7 @@
   let paused = false;
   let fromPause = false; // 是否从暂停菜单进入设置/统计
   let hoveredBtn = null;
-  let settings = { teamSize: 5, chargeSpeed: 1.2, maxEnergy: 80, mapId: 'empty', gameMode: 'ai' };
+  let settings = { teamSize: 5, chargeSpeed: 1.2, maxEnergy: 80, mapId: 'empty', gameMode: 'ai', difficulty: 'normal', unitMode: 'class', sound: true };
   let stats = { gamesPlayed: 0, wins: 0, losses: 0, totalKills: 0, totalDeaths: 0, totalTurns: 0 };
 
   // 暂停菜单按钮定义
@@ -141,6 +176,9 @@
     { id: 'exit_save', label: '退出并保存', color: '#555' },
   ];
   let pauseBtnPos = [];
+
+  // 游戏结束画面按钮（每帧由 drawGameOverScreen 重算，点击/悬停共用）
+  let gameOverBtns = [];
 
   // ============================================================
   //  工具函数
@@ -211,8 +249,8 @@
 
   function saveGame() {
     const snap = {
-      red: state.teams.red.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index })),
-      blue: state.teams.blue.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index })),
+      red: state.teams.red.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index, cls: u.cls, hp: u.hp, maxHp: u.maxHp, radius: u.radius })),
+      blue: state.teams.blue.map(u => ({ id: u.id, x: u.x, y: u.y, alive: u.alive, index: u.index, cls: u.cls, hp: u.hp, maxHp: u.maxHp, radius: u.radius })),
       currentTeam: state.currentTeam,
       turnCount: state.turnCount,
       killCount: { red: state.killCount.red, blue: state.killCount.blue },
@@ -280,11 +318,17 @@
       // 恢复状态
       for (const u of snap.red) {
         const t = state.teams.red.find(p => p.id === u.id);
-        if (t) { t.x = u.x; t.y = u.y; t.alive = u.alive; }
+        if (t) {
+          t.x = u.x; t.y = u.y; t.alive = u.alive;
+          if (u.cls) { t.cls = u.cls; t.hp = u.hp; t.maxHp = u.maxHp; t.radius = u.radius; }
+        }
       }
       for (const u of snap.blue) {
         const t = state.teams.blue.find(p => p.id === u.id);
-        if (t) { t.x = u.x; t.y = u.y; t.alive = u.alive; }
+        if (t) {
+          t.x = u.x; t.y = u.y; t.alive = u.alive;
+          if (u.cls) { t.cls = u.cls; t.hp = u.hp; t.maxHp = u.maxHp; t.radius = u.radius; }
+        }
       }
       state.currentTeam = snap.currentTeam || 'red';
       state.turnCount = snap.turnCount || 0;
@@ -302,6 +346,7 @@
       state.charging = false;
       state.bullet = null;
       state.deadTargets = [];
+      state.hitEffects = [];
       clearTimeout(state.aiTimer);
       return true;
     } catch (_) { return false; }
@@ -316,6 +361,51 @@
   }
 
   // ============================================================
+  //  WebAudio 合成音效
+  // ============================================================
+  const Sound = {
+    ctx: null,
+    ensure() {
+      if (settings.sound === false) return null;
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try { this.ctx = new AC(); } catch (_) { return null; }
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return this.ctx;
+    },
+    tone(freq, dur, type, vol, slideTo) {
+      const c = this.ensure();
+      if (!c) return;
+      try {
+        const t0 = c.currentTime;
+        const osc = c.createOscillator();
+        const g = c.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+        g.gain.setValueAtTime(vol, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g); g.connect(c.destination);
+        osc.start(t0); osc.stop(t0 + dur + 0.02);
+      } catch (_) {}
+    },
+    shoot()  { this.tone(560, 0.12, 'square', 0.12, 160); },
+    bounce() { this.tone(240, 0.05, 'triangle', 0.08, 180); },
+    hit()    { this.tone(190, 0.12, 'sawtooth', 0.12, 90); },
+    kill()   { this.tone(130, 0.28, 'sawtooth', 0.16, 40); },
+    win()  { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.18, 'triangle', 0.14), i * 120)); },
+    lose() { [330, 262, 196, 147].forEach((f, i) => setTimeout(() => this.tone(f, 0.22, 'sawtooth', 0.1), i * 140)); },
+  };
+
+  /** 对局结束音效（人机模式按玩家胜负区分） */
+  function playEndSound(winner) {
+    if (settings.gameMode === 'ai' && winner !== 'red') Sound.lose();
+    else Sound.win();
+  }
+
+  // ============================================================
   //  初始化
   // ============================================================
   function resizeCanvas() {
@@ -325,11 +415,41 @@
     state.canvasH = canvas.height;
   }
 
+  /** 按队伍人数生成兵种序列（重装 ≈ 1/3，狙击 ≈ 1/3，其余突击） */
+  function pickClasses(n) {
+    const arr = [];
+    const heavy = n >= 3 ? Math.floor(n / 3) : 0;
+    const sniper = n >= 4 ? Math.floor((n - 1) / 3) : 0;
+    for (let i = 0; i < heavy; i++) arr.push('heavy');
+    for (let i = 0; i < sniper; i++) arr.push('sniper');
+    while (arr.length < n) arr.push('assault');
+    // 打乱顺序，避免兵种位置固定
+    for (let i = arr.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [arr[i], arr[j]] = [arr[j], arr[i]];
+    }
+    return arr;
+  }
+
+  function makeUnit(cls, id, x, y, index) {
+    const useClasses = settings.unitMode === 'class';
+    const def = UNIT_CLASSES[useClasses ? cls : 'assault'];
+    return {
+      id, x, y, alive: true, index,
+      cls: useClasses ? cls : 'assault',
+      hp: def.hp, maxHp: def.hp,
+      radius: def.radius,
+      energyMult: def.energyMult,
+      decayMult: def.decayMult,
+    };
+  }
+
   function initPlayers() {
     state.teams.red  = [];
     state.teams.blue = [];
 
     const teamSize = settings.teamSize;
+    const classes = pickClasses(teamSize);
     const margin = 60;
     const allPositions = [];
     for (let i = 0; i < teamSize * 2; i++) {
@@ -347,16 +467,8 @@
     }
 
     for (let i = 0; i < teamSize; i++) {
-      state.teams.red.push({
-        id: `r${i}`, x: allPositions[i].x, y: allPositions[i].y,
-        alive: true, radius: PLAYER_RADIUS, index: i,
-      });
-      state.teams.blue.push({
-        id: `b${i}`,
-        x: allPositions[i + teamSize].x,
-        y: allPositions[i + teamSize].y,
-        alive: true, radius: PLAYER_RADIUS, index: i,
-      });
+      state.teams.red.push(makeUnit(classes[i], `r${i}`, allPositions[i].x, allPositions[i].y, i));
+      state.teams.blue.push(makeUnit(classes[i], `b${i}`, allPositions[i + teamSize].x, allPositions[i + teamSize].y, i));
     }
   }
 
@@ -371,6 +483,7 @@
     state.turnCount = 0;
     state.killCount = { red: 0, blue: 0 };
     state.deadTargets = [];
+    state.hitEffects = [];
     state.currentTeam = 'red';
     clearTimeout(state.aiTimer);
     state.camera.x = (canvas.width - WORLD_W * state.camera.zoom) / 2;
@@ -411,7 +524,7 @@
   // ============================================================
   function fireBullet(unit, angle, charge) {
     const speed = BULLET_BASE_SPEED * (charge / MAX_CHARGE);
-    const energy = settings.maxEnergy * (charge / MAX_CHARGE);
+    const energy = settings.maxEnergy * unit.energyMult * (charge / MAX_CHARGE);
     state.bullet = {
       x: unit.x,
       y: unit.y,
@@ -422,11 +535,14 @@
       prevX: unit.x,
       prevY: unit.y,
       energy: energy,
+      decay: ENERGY_DECAY * unit.decayMult,
       angle: angle,
       team: state.currentTeam,
       unitId: unit.id,
+      hitIds: [],               // 本颗子弹已命中过的队员（穿透不重复伤害）
       done: false,
     };
+    Sound.shoot();
     state.turnPhase = 'bullet';
   }
 
@@ -466,6 +582,7 @@
       state.gameOver = true;
       state.winner = bullet.team;
       state.turnPhase = 'gameover';
+      playEndSound(bullet.team);
       // 记录统计
       stats.gamesPlayed++;
       if (bullet.team === 'red') stats.wins++; else stats.losses++;
@@ -499,6 +616,25 @@
   // ============================================================
   //  AI 逻辑
   // ============================================================
+  /** 估算子弹飞到距离 d 所需的蓄力（基于射手自身能量参数） */
+  function chargeForDistance(d, unit) {
+    const eMult = unit.energyMult || 1;
+    const dMult = unit.decayMult || 1;
+    const c = Math.sqrt((d * ENERGY_DECAY * dMult * 100 * 100) / (BULLET_BASE_SPEED * settings.maxEnergy * eMult));
+    return clamp(c, 25, 100);
+  }
+
+  /** 两点间视线是否无遮挡（采样检测障碍物） */
+  function hasLineOfSight(x1, y1, x2, y2) {
+    const d = dist(x1, y1, x2, y2);
+    const steps = Math.max(2, Math.ceil(d / 15));
+    for (let i = 1; i < steps; i++) {
+      const t = i / steps;
+      if (hitObstacle(x1 + (x2 - x1) * t, y1 + (y2 - y1) * t)) return false;
+    }
+    return true;
+  }
+
   function startAITurn() {
     state.currentTeam = 'blue';
     state.turnPhase = 'ai_select';
@@ -508,37 +644,67 @@
       state.gameOver = true;
       state.winner = 'red';
       state.turnPhase = 'gameover';
+      playEndSound('red');
       stats.gamesPlayed++; stats.wins++; stats.totalTurns += state.turnCount; saveStats();
       return;
     }
 
     // 1. 选一个存活队员
-    const unit = alive[Math.floor(Math.random() * alive.length)];
+    let unit = alive[Math.floor(Math.random() * alive.length)];
     state.selectedUnit = unit;
 
-    // 2. 找最近的敌人
+    // 2. 找敌人
     const enemies = getAlive(state.teams.red);
     if (enemies.length === 0) {
       state.gameOver = true;
       state.winner = 'blue';
       state.turnPhase = 'gameover';
+      playEndSound('blue');
       stats.gamesPlayed++; stats.losses++; stats.totalTurns += state.turnCount; saveStats();
       return;
     }
 
-    let target = enemies[0];
-    let minDist = dist(unit.x, unit.y, target.x, target.y);
-    for (const e of enemies) {
-      const d = dist(unit.x, unit.y, e.x, e.y);
-      if (d < minDist) { minDist = d; target = e; }
+    const diff = DIFFICULTIES.includes(settings.difficulty) ? settings.difficulty : 'normal';
+
+    // 困难：优先选有视线可打的队员
+    if (diff === 'hard') {
+      const withLos = alive.filter(u => enemies.some(e => hasLineOfSight(u.x, u.y, e.x, e.y)));
+      const pool = withLos.length ? withLos : alive;
+      unit = pool[Math.floor(Math.random() * pool.length)];
+      state.selectedUnit = unit;
     }
 
-    // 3. 方向（加随机偏移 ±20°）
-    const baseAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
-    const angle = baseAngle + rand(-0.35, 0.35);
+    // 3. 选目标：简单/普通找最近；困难优先有视线、剩余血量低、距离近
+    let target = enemies[0];
+    if (diff !== 'hard') {
+      let minDist = dist(unit.x, unit.y, target.x, target.y);
+      for (const e of enemies) {
+        const d = dist(unit.x, unit.y, e.x, e.y);
+        if (d < minDist) { minDist = d; target = e; }
+      }
+    } else {
+      let best = -Infinity;
+      for (const e of enemies) {
+        const d = dist(unit.x, unit.y, e.x, e.y);
+        const los = hasLineOfSight(unit.x, unit.y, e.x, e.y) ? 1 : 0;
+        const score = los * 5000 - e.hp * 800 - d;
+        if (score > best) { best = score; target = e; }
+      }
+    }
 
-    // 4. 随机蓄力 30%-90%
-    const charge = rand(30, 90);
+    // 4. 方向与蓄力
+    const baseAngle = Math.atan2(target.y - unit.y, target.x - unit.x);
+    let angle, charge;
+    if (diff === 'easy') {
+      angle = baseAngle + rand(-0.35, 0.35);
+      charge = rand(30, 90);
+    } else {
+      const d = dist(unit.x, unit.y, target.x, target.y);
+      const jitter = diff === 'normal' ? 5 : 2;
+      const angJit = diff === 'normal' ? 0.12 : 0.045;
+      angle = baseAngle + rand(-angJit, angJit);
+      charge = clamp(chargeForDistance(d, unit) + rand(-jitter, jitter), 25, 100);
+    }
 
     // 短暂延迟后发射
     state.aiTimer = setTimeout(() => {
@@ -616,11 +782,24 @@
             saveSettings();
             return;
           }
-          // 地图切换
-          if (b.id === 'prev_mapId' || b.id === 'next_mapId') {
-            const mapKeys = Object.keys(MAPS);
-            const idx = mapKeys.indexOf(settings.mapId);
-            settings.mapId = mapKeys[(idx + (b.id === 'next_mapId' ? 1 : -1) + mapKeys.length) % mapKeys.length];
+          // 地图与自定义选项切换
+          if (b.id.startsWith('prev_') || b.id.startsWith('next_')) {
+            const key = b.id.slice(5);
+            const dir = b.id.startsWith('next_') ? 1 : -1;
+            if (key === 'mapId') {
+              const mapKeys = Object.keys(MAPS);
+              const idx = mapKeys.indexOf(settings.mapId);
+              settings.mapId = mapKeys[(idx + dir + mapKeys.length) % mapKeys.length];
+            } else if (key === 'difficulty') {
+              const idx = DIFFICULTIES.indexOf(settings.difficulty);
+              settings.difficulty = DIFFICULTIES[(idx + dir + DIFFICULTIES.length) % DIFFICULTIES.length];
+            } else if (key === 'unitMode') {
+              settings.unitMode = settings.unitMode === 'class' ? 'classic' : 'class';
+            } else if (key === 'sound') {
+              settings.sound = settings.sound === false;
+            } else {
+              return;
+            }
             saveSettings();
             return;
           }
@@ -652,7 +831,11 @@
       handlePauseHover(e.clientX, e.clientY);
     } else if (screen === 'game') {
       hoveredBtn = null;
-      if (state.dragging) {
+      if (state.gameOver) {
+        for (const b of gameOverBtns) {
+          if (hitBtn(b, e.clientX, e.clientY)) { hoveredBtn = b.id; break; }
+        }
+      } else if (state.dragging) {
         const c = state.camera;
         c.x = state.dragCamX + (e.clientX - state.dragStartX);
         c.y = state.dragCamY + (e.clientY - state.dragStartY);
@@ -730,18 +913,15 @@
   });
 
   function handleGameOverClick(mx, my) {
-    const W = state.canvasW, H = state.canvasH;
-    const btnW = 180, btnH = 44;
-    const cx = W / 2;
-    const y1 = H / 2 + 60;
-    const y2 = y1 + 56;
-    if (mx >= cx - btnW / 2 && mx <= cx + btnW / 2 && my >= y1 - btnH / 2 && my <= y1 + btnH / 2) {
-      // 再来一局
-      screen = 'game';
-      resetGame();
-    }
-    if (mx >= cx - btnW / 2 && mx <= cx + btnW / 2 && my >= y2 - btnH / 2 && my <= y2 + btnH / 2) {
-      screen = 'menu';
+    for (const b of gameOverBtns) {
+      if (!hitBtn(b, mx, my)) continue;
+      if (b.id === 'restart') {
+        screen = 'game';
+        resetGame();
+      } else if (b.id === 'to_menu') {
+        screen = 'menu';
+      }
+      return;
     }
   }
 
@@ -897,6 +1077,7 @@
       drawAimLine();
       drawBullet();
       drawKillEffects();
+      drawHitEffects();
     });
 
     // UI（屏幕坐标）
@@ -1004,7 +1185,7 @@
     ctx.font = '13px "Segoe UI", sans-serif';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
-    ctx.fillText('v1.0', W / 2, H - 16);
+    ctx.fillText('v1.1', W / 2, H - 16);
   }
 
   // ---------- 存档列表 ----------
@@ -1092,25 +1273,19 @@
     ctx.font = 'bold 32px "Segoe UI", sans-serif';
     ctx.fillText('⚙ 设置', W / 2, 60);
 
-    // 地图列表
-    const mapKeys = Object.keys(MAPS);
-    const curMapIdx = mapKeys.indexOf(settings.mapId);
-
     // 设置项
     const items = [
       { label: '队伍人数', key: 'teamSize', val: settings.teamSize, min: 3, max: 7, step: 1, fmt: v => v },
       { label: '蓄力速度', key: 'chargeSpeed', val: settings.chargeSpeed, min: 0.5, max: 2.0, step: 0.1, fmt: v => v.toFixed(1) },
       { label: '最大距离', key: 'maxEnergy', val: settings.maxEnergy, min: 50, max: 150, step: 5, fmt: v => `${v}%` },
-      { label: '地图', key: 'mapId', val: MAPS[settings.mapId].name, custom: true, fmt: v => v, clickPrev: () => {
-        const idx = (mapKeys.indexOf(settings.mapId) - 1 + mapKeys.length) % mapKeys.length;
-        settings.mapId = mapKeys[idx]; saveSettings();
-      }, clickNext: () => {
-        const idx = (mapKeys.indexOf(settings.mapId) + 1) % mapKeys.length;
-        settings.mapId = mapKeys[idx]; saveSettings();
-      }},
+      { label: 'AI 难度', key: 'difficulty', val: DIFF_LABELS[settings.difficulty] || '普通', custom: true, fmt: v => v },
+      { label: '兵种模式', key: 'unitMode', val: settings.unitMode === 'class' ? '兵种' : '经典', custom: true, fmt: v => v },
+      { label: '音效', key: 'sound', val: settings.sound === false ? '关' : '开', custom: true, fmt: v => v },
+      { label: '地图', key: 'mapId', val: MAPS[settings.mapId].name, custom: true, fmt: v => v },
     ];
     const startY = 120;
     const rowH = 62;
+    const btns = [];
 
     for (let i = 0; i < items.length; i++) {
       const item = items[i];
@@ -1125,25 +1300,25 @@
       ctx.font = 'bold 22px "Segoe UI", sans-serif';
       ctx.fillText(item.fmt(item.val), W / 2 + 20, y);
 
-      if (item.custom) {
-        // 地图切换用 ◀ ▶
-        const btnW = 36, btnH = 36;
-        drawButton('◀', W / 2 + 90, y - btnH / 2, btnW, btnH, `prev_${item.key}`);
-        drawButton('▶', W / 2 + 140, y - btnH / 2, btnW, btnH, `next_${item.key}`);
-      } else {
-        // - + 按钮
-        const btnW = 36, btnH = 36;
-        drawButton('−', W / 2 + 90, y - btnH / 2, btnW, btnH, `dec_${item.key}`);
-        drawButton('+', W / 2 + 140, y - btnH / 2, btnW, btnH, `inc_${item.key}`);
-      }
+      // - + 按钮（自定义项为 ◀ ▶）
+      const btnW = 36, btnH = 36;
+      const bx1 = W / 2 + 90, bx2 = W / 2 + 140, by = y - btnH / 2;
+      const prefix = item.custom ? ['prev_', 'next_'] : ['dec_', 'inc_'];
+      drawButton(item.custom ? '◀' : '−', bx1, by, btnW, btnH, prefix[0] + item.key);
+      drawButton(item.custom ? '▶' : '+', bx2, by, btnW, btnH, prefix[1] + item.key);
+      btns.push({ id: prefix[0] + item.key, x: bx1, y: by, w: btnW, h: btnH });
+      btns.push({ id: prefix[1] + item.key, x: bx2, y: by, w: btnW, h: btnH });
     }
 
     // 重置统计数据
     const rstY = startY + items.length * rowH + 20;
     drawButton('重置统计数据', (W - BTN_W) / 2, rstY, BTN_W, BTN_H, 'reset_stats', '#555');
+    btns.push({ id: 'reset_stats', x: (W - BTN_W) / 2, y: rstY, w: BTN_W, h: BTN_H });
 
     // 返回按钮
     drawButton('返  回', (W - 160) / 2, rstY + 70, 160, 44, 'back');
+    btns.push({ id: 'back', x: (W - 160) / 2, y: rstY + 70, w: 160, h: 44 });
+    defineBtns(btns);
     ctx.restore();
   }
 
@@ -1191,6 +1366,10 @@
     const btnY = startY + rows.length * rowH + 16;
     drawButton('重置统计数据', (W - BTN_W) / 2, btnY, BTN_W, BTN_H, 'reset_stats', '#555');
     drawButton('返  回', (W - 160) / 2, btnY + 70, 160, 44, 'back');
+    defineBtns([
+      { id: 'reset_stats', x: (W - BTN_W) / 2, y: btnY, w: BTN_W, h: BTN_H },
+      { id: 'back', x: (W - 160) / 2, y: btnY + 70, w: 160, h: 44 },
+    ]);
     ctx.restore();
   }
 
@@ -1285,6 +1464,31 @@
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(u.index + 1, u.x, u.y + 1);
+
+        // 血量点（多血量兵种才显示）
+        if (u.maxHp > 1) {
+          for (let i = 0; i < u.maxHp; i++) {
+            const px = u.x - ((u.maxHp - 1) * 9) / 2 + i * 9;
+            ctx.beginPath();
+            ctx.arc(px, u.y - r - 9, 3.4, 0, Math.PI * 2);
+            ctx.fillStyle = i < u.hp ? '#2ecc71' : 'rgba(0,0,0,0.5)';
+            ctx.fill();
+          }
+        }
+
+        // 兵种徽标
+        if (settings.unitMode === 'class') {
+          const badge = UNIT_CLASSES[u.cls] ? UNIT_CLASSES[u.cls].name[0] : '突';
+          ctx.fillStyle = 'rgba(0,0,0,0.55)';
+          ctx.beginPath();
+          ctx.roundRect(u.x - 9, u.y + r + 4, 18, 15, 4);
+          ctx.fill();
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 10px "Segoe UI", sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(badge, u.x, u.y + r + 12);
+        }
       }
     }
   }
@@ -1453,6 +1657,24 @@
     }
   }
 
+  // ---------- 命中特效 ----------
+  function drawHitEffects() {
+    const now = Date.now();
+    state.hitEffects = state.hitEffects.filter(e => now - e.t < 300);
+    for (const e of state.hitEffects) {
+      const age = (now - e.t) / 300;
+      ctx.save();
+      ctx.globalAlpha = 1 - age;
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = '#ffe066';
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y, 6 + age * 14, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.restore();
+    }
+  }
+
   // ---------- UI ----------
   function drawUI(W, H) {
     // 顶部状态栏背景
@@ -1485,7 +1707,7 @@
     // 回合指示
     const turnLabel = settings.gameMode === 'pvp'
       ? (state.currentTeam === 'red' ? '🔴 红方回合' : '🔵 蓝方回合')
-      : `回合 ${state.turnCount}`;
+      : `回合 ${state.turnCount} · AI ${DIFF_LABELS[settings.difficulty] || '普通'}`;
     ctx.textAlign = 'center';
     ctx.fillStyle = state.currentTeam === 'red' ? TEAM_COLORS.red.main : TEAM_COLORS.blue.main;
     ctx.font = state.gameOver ? '14px "Segoe UI", sans-serif' : 'bold 16px "Segoe UI", sans-serif';
@@ -1629,8 +1851,13 @@
 
     // 再来一局
     const btnW = 180, btnH = 44, cx = W / 2;
-    drawButton('再来一局', cx - btnW / 2, H / 2 + 60, btnW, btnH, 'restart', '#c0392b');
-    drawButton('返回菜单', cx - btnW / 2, H / 2 + 60 + 56, btnW, btnH, 'to_menu');
+    gameOverBtns = [
+      { id: 'restart', label: '再来一局', x: cx - btnW / 2, y: H / 2 + 60, w: btnW, h: btnH },
+      { id: 'to_menu', label: '返回菜单', x: cx - btnW / 2, y: H / 2 + 60 + 56, w: btnW, h: btnH },
+    ];
+    for (const b of gameOverBtns) {
+      drawButton(b.label, b.x, b.y, b.w, b.h, b.id, b.id === 'restart' ? '#c0392b' : undefined);
+    }
 
     ctx.restore();
   }
@@ -1691,16 +1918,24 @@
       b.prevY = b.y;
       b.x += b.vx;
       b.y += b.vy;
-      b.energy -= ENERGY_DECAY;
+      b.energy -= b.decay;
 
-      // 碰撞检测：敌人（穿透击杀）
+      // 碰撞检测：敌人（穿透，命中扣 1 HP）
       const enemyTeam = b.team === 'red' ? state.teams.blue : state.teams.red;
       const hits = checkBulletCollisions(b, enemyTeam);
       for (const u of hits) {
-        if (!u.alive) continue;
-        u.alive = false;
-        state.killCount[b.team]++;
-        state.deadTargets.push({ x: u.x, y: u.y, t: Date.now() });
+        if (!u.alive || b.hitIds.includes(u.id)) continue;
+        b.hitIds.push(u.id);
+        u.hp -= 1;
+        if (u.hp <= 0) {
+          u.alive = false;
+          state.killCount[b.team]++;
+          state.deadTargets.push({ x: u.x, y: u.y, t: Date.now() });
+          Sound.kill();
+        } else {
+          state.hitEffects.push({ x: u.x, y: u.y, t: Date.now() });
+          Sound.hit();
+        }
       }
 
       // 队友反弹
@@ -1715,6 +1950,7 @@
           b.vy = Math.sin(angle) * speed;
           b.x = u.x + Math.cos(angle) * (u.radius + 5);
           b.y = u.y + Math.sin(angle) * (u.radius + 5);
+          Sound.bounce();
           break;
         }
       }
@@ -1741,13 +1977,13 @@
           }
         }
       }
-      if (bounced) return;
+      if (bounced) { Sound.bounce(); return; }
 
       // 边界反弹
-      if (b.x <= 0) { b.x = 0; b.vx = -b.vx; }
-      if (b.x >= WORLD_W) { b.x = WORLD_W; b.vx = -b.vx; }
-      if (b.y <= 0) { b.y = 0; b.vy = -b.vy; }
-      if (b.y >= WORLD_H) { b.y = WORLD_H; b.vy = -b.vy; }
+      if (b.x <= 0) { b.x = 0; b.vx = -b.vx; Sound.bounce(); }
+      if (b.x >= WORLD_W) { b.x = WORLD_W; b.vx = -b.vx; Sound.bounce(); }
+      if (b.y <= 0) { b.y = 0; b.vy = -b.vy; Sound.bounce(); }
+      if (b.y >= WORLD_H) { b.y = WORLD_H; b.vy = -b.vy; Sound.bounce(); }
 
       // 能量耗尽时停止
       if (b.energy <= 0) {

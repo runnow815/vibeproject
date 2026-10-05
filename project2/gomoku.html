@@ -114,6 +114,9 @@
   }
   #boardCanvas {
     display: block;
+    /* 视口宽高双重约束（坐标换算已按 rect 缩放比适配，缩小不失真） */
+    width: min(534px, 92vw, calc(100vh - 200px));
+    height: auto;
     border-radius: 4px;
   }
 
@@ -194,6 +197,77 @@
     font-size: 12px;
     color: #aaa;
     font-weight: 400;
+  }
+
+  /* ===== 对战模式 ===== */
+  .mode-section {
+    background: #f8f4ec;
+    border: 1px solid #e0d5c5;
+    border-radius: 6px;
+    padding: 10px 12px 12px;
+  }
+  .mode-section .section-title {
+    font-size: 13px;
+    color: #8a7a6a;
+    text-align: center;
+    letter-spacing: 4px;
+    margin-bottom: 8px;
+  }
+  .mode-row {
+    display: flex;
+    gap: 6px;
+  }
+  .mode-btn {
+    flex: 1;
+    padding: 6px 0;
+    border: 1px solid #d0c0a8;
+    border-radius: 4px;
+    background: #faf6ee;
+    color: #2c1810;
+    font-family: inherit;
+    font-size: 12px;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+  }
+  .mode-btn:hover {
+    background: #e8dcc8;
+    border-color: #b0a090;
+  }
+  .mode-btn.active {
+    background: #c0392b;
+    border-color: #a03020;
+    color: #fff;
+  }
+  .option-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    margin-top: 9px;
+    font-size: 13px;
+    color: #5a4a3a;
+  }
+  .option-row label {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    cursor: pointer;
+  }
+  .option-row input[type="checkbox"] {
+    accent-color: #c0392b;
+    cursor: pointer;
+  }
+  .option-row select {
+    font-family: inherit;
+    font-size: 12px;
+    border: 1px solid #d0c0a8;
+    border-radius: 4px;
+    background: #faf6ee;
+    color: #2c1810;
+    padding: 1px 2px;
+    cursor: pointer;
   }
 
   /* ===== 回合记录 ===== */
@@ -431,6 +505,28 @@
     <!-- 侧边面板 -->
     <div class="side-panel">
 
+      <!-- 对战模式 -->
+      <div class="mode-section">
+        <div class="section-title">— 对 弈 —</div>
+        <div class="mode-row">
+          <button class="mode-btn" data-mode="pvp">双人对弈</button>
+          <button class="mode-btn" data-mode="ai_black">人机·我执黑</button>
+          <button class="mode-btn" data-mode="ai_white">人机·我执白</button>
+        </div>
+        <div class="option-row">
+          <label><input type="checkbox" id="optForbidden">黑棋禁手</label>
+          <label><input type="checkbox" id="optTimed">计时</label>
+          <label><input type="checkbox" id="optSound">音效</label>
+          <label>棋力
+            <select id="aiDifficulty">
+              <option value="easy">简单</option>
+              <option value="normal" selected>中等</option>
+              <option value="hard">困难</option>
+            </select>
+          </label>
+        </div>
+      </div>
+
       <!-- 计时器 -->
       <div class="timer-section">
         <div class="section-title">— 时 计 —</div>
@@ -502,6 +598,12 @@
 
   const EMPTY = 0, BLACK = 1, WHITE = 2;
 
+  // 四个判定方向（胜负判定 / AI / 禁手共用）
+  const DIRS = [[1, 0], [0, 1], [1, 1], [1, -1]];
+
+  // 对局设置（localStorage 持久化）
+  let settings = { mode: 'pvp', difficulty: 'normal', forbidden: false, timed: true, sound: true };
+
   // 星位（0-indexed）
   const STAR_POINTS = [
     [3,3], [3,7], [3,11],
@@ -523,6 +625,11 @@
   const dwEl     = document.getElementById('drawCount');
   const blackTR  = document.getElementById('blackTimer');
   const whiteTR  = document.getElementById('whiteTimer');
+  const modeBtns = document.querySelectorAll('.mode-btn');
+  const optForbidden = document.getElementById('optForbidden');
+  const optTimed = document.getElementById('optTimed');
+  const optSound = document.getElementById('optSound');
+  const aiDifficultySel = document.getElementById('aiDifficulty');
 
   const canvasSize = PADDING * 2 + (BOARD_SIZE - 1) * CELL_SIZE;
   canvas.width  = canvasSize;
@@ -545,17 +652,82 @@
     hoverPos: null,     // {r,c} 或 null
     lastMove: null,     // {r,c} 或 null
     selectedHist: -1,   // 回合记录选中下标
+    anim: null,         // 落子动画 { r, c, t0, dur }
+    aiTimer: null,      // AI 思考定时器
     stats: { black: 0, white: 0, draw: 0 },
   };
+
+  // ============================================================
+  //  WebAudio 合成音效
+  // ============================================================
+  const Sound = {
+    ctx: null,
+    ensure() {
+      if (!settings.sound) return null;
+      if (!this.ctx) {
+        const AC = window.AudioContext || window.webkitAudioContext;
+        if (!AC) return null;
+        try { this.ctx = new AC(); } catch (_) { return null; }
+      }
+      if (this.ctx.state === 'suspended') this.ctx.resume();
+      return this.ctx;
+    },
+    tone(freq, dur, type, vol, slideTo) {
+      const c = this.ensure();
+      if (!c) return;
+      try {
+        const t0 = c.currentTime;
+        const osc = c.createOscillator();
+        const g = c.createGain();
+        osc.type = type;
+        osc.frequency.setValueAtTime(freq, t0);
+        if (slideTo) osc.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+        g.gain.setValueAtTime(vol, t0);
+        g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+        osc.connect(g); g.connect(c.destination);
+        osc.start(t0); osc.stop(t0 + dur + 0.02);
+      } catch (_) {}
+    },
+    place()    { this.tone(660, 0.07, 'sine', 0.22, 240); },
+    forbidden(){ this.tone(200, 0.18, 'square', 0.12, 120); },
+    win()    { [523, 659, 784, 1047].forEach((f, i) => setTimeout(() => this.tone(f, 0.2, 'triangle', 0.16), i * 130)); },
+  };
+
+  // ============================================================
+  //  设置 — localStorage
+  // ============================================================
+  function loadSettings() {
+    try {
+      const saved = localStorage.getItem('gomoku_settings_chinese');
+      if (saved) Object.assign(settings, JSON.parse(saved));
+    } catch (_) { /* ignore */ }
+  }
+
+  function saveSettings() {
+    try {
+      localStorage.setItem('gomoku_settings_chinese', JSON.stringify(settings));
+    } catch (_) { /* ignore */ }
+  }
 
   // ============================================================
   //  初始化
   // ============================================================
   function init() {
+    loadSettings();
     loadStats();
+    syncSettingsUI();
     resetBoard();
     draw();
     updateUI();
+  }
+
+  /** 把 settings 同步到面板控件 */
+  function syncSettingsUI() {
+    modeBtns.forEach(b => b.classList.toggle('active', b.dataset.mode === settings.mode));
+    optForbidden.checked = !!settings.forbidden;
+    optTimed.checked = !!settings.timed;
+    optSound.checked = !!settings.sound;
+    aiDifficultySel.value = settings.difficulty;
   }
 
   function resetBoard() {
@@ -570,9 +742,13 @@
     state.lastMove = null;
     state.selectedHist = -1;
     state.hoverPos = null;
+    state.anim = null;
+    clearTimeout(state.aiTimer);
     stopTimer();
-    state.timerActive = true;
-    startTimer();
+    if (settings.timed) {
+      state.timerActive = true;
+      startTimer();
+    }
   }
 
   // ============================================================
@@ -659,17 +835,43 @@
     for (let r = 0; r < BOARD_SIZE; r++) {
       for (let c = 0; c < BOARD_SIZE; c++) {
         if (state.board[r][c] !== EMPTY) {
-          drawStone(r, c, state.board[r][c], 1);
+          let scale = 1;
+          if (state.anim && state.anim.r === r && state.anim.c === c) {
+            const p = Math.min(1, (performance.now() - state.anim.t0) / state.anim.dur);
+            scale = easeOutBack(p);
+          }
+          drawStone(r, c, state.board[r][c], 1, scale);
         }
       }
     }
   }
 
+  /** 落子回弹缓动 */
+  function easeOutBack(p) {
+    const c1 = 1.70158, c3 = c1 + 1;
+    return 1 + c3 * Math.pow(p - 1, 3) + c1 * Math.pow(p - 1, 2);
+  }
+
+  /** 启动落子动画（rAF 循环重绘） */
+  function startPlaceAnim(r, c) {
+    state.anim = { r, c, t0: performance.now(), dur: 200 };
+    requestAnimationFrame(function animLoop() {
+      if (!state.anim) return;
+      draw();
+      if (performance.now() - state.anim.t0 < state.anim.dur) {
+        requestAnimationFrame(animLoop);
+      } else {
+        state.anim = null;
+        draw();
+      }
+    });
+  }
+
   /** 单个棋子 */
-  function drawStone(r, c, player, alpha) {
+  function drawStone(r, c, player, alpha, scale) {
     const x = PADDING + c * CELL_SIZE;
     const y = PADDING + r * CELL_SIZE;
-    const radius = STONE_RADIUS;
+    const radius = STONE_RADIUS * (scale === undefined ? 1 : Math.max(0.05, scale));
 
     ctx.save();
     ctx.globalAlpha = alpha;
@@ -727,8 +929,28 @@
   function drawHoverStone() {
     if (!state.hoverPos) return;
     if (state.gameOver) return;
+    if (isAITurn()) return;
     const { r, c } = state.hoverPos;
     if (state.board[r][c] !== EMPTY) return;
+
+    // 黑棋禁手点：淡子 + 朱砂叉提示
+    if (settings.forbidden && state.current === BLACK && isForbiddenMove(r, c)) {
+      drawStone(r, c, state.current, 0.15);
+      const x = PADDING + c * CELL_SIZE;
+      const y = PADDING + r * CELL_SIZE;
+      const s = STONE_RADIUS * 0.6;
+      ctx.save();
+      ctx.shadowColor = 'transparent';
+      ctx.strokeStyle = 'rgba(192,57,43,0.85)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(x - s, y - s); ctx.lineTo(x + s, y + s);
+      ctx.moveTo(x + s, y - s); ctx.lineTo(x - s, y + s);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+
     drawStone(r, c, state.current, 0.35);
   }
 
@@ -805,6 +1027,7 @@
 
   function onCanvasClick(e) {
     if (state.gameOver) return;
+    if (isAITurn()) return;   // AI 回合不可落子
     const { mx, my } = getCanvasCoords(e);
     const pos = getNearestIntersection(mx, my);
     if (!pos) return;
@@ -812,7 +1035,24 @@
     const { r, c } = pos;
     if (state.board[r][c] !== EMPTY) return;
 
+    // 黑棋禁手（简化连珠规则）
+    if (settings.forbidden && state.current === BLACK && isForbiddenMove(r, c)) {
+      flashForbidden();
+      return;
+    }
+
     placeStone(r, c);
+  }
+
+  /** 禁手提示（状态栏闪现 + 音效） */
+  function flashForbidden() {
+    Sound.forbidden();
+    statusEl.className = 'status-bar win';
+    statusEl.innerHTML = '⛔ 黑棋禁手点，另寻他处';
+    clearTimeout(state.forbiddenFlash);
+    state.forbiddenFlash = setTimeout(() => {
+      if (!state.gameOver) updateUI();
+    }, 1200);
   }
 
   function onCanvasMove(e) {
@@ -839,6 +1079,9 @@
     state.lastMove = { r, c };
     state.selectedHist = -1;
 
+    Sound.place();
+    startPlaceAnim(r, c);
+
     // 检查胜负
     const winResult = checkWin(r, c, player);
     if (winResult) {
@@ -849,6 +1092,7 @@
       saveStats();
       stopTimer();
       state.timerActive = false;
+      Sound.win();
       draw();
       updateUI();
       return;
@@ -875,6 +1119,9 @@
 
     draw();
     updateUI();
+
+    // 若轮到 AI 则接续思考
+    scheduleAI();
   }
 
   /** 四方向检测，返回获胜五子坐标数组或 null */
@@ -908,24 +1155,234 @@
     return null;
   }
 
+  // ============================================================
+  //  AI 引擎 & 禁手判定（简化连珠规则）
+  // ============================================================
+  function inBoard(r, c) { return r >= 0 && r < BOARD_SIZE && c >= 0 && c < BOARD_SIZE; }
+
+  /** 是否轮到 AI（mode: 'ai_black' = 玩家执黑 AI 执白，'ai_white' = 玩家执白 AI 执黑） */
+  function isAITurn() {
+    if (settings.mode === 'pvp') return false;
+    const aiSide = settings.mode === 'ai_black' ? WHITE : BLACK;
+    return state.current === aiSide;
+  }
+
+  /** 安排 AI 思考（延时落子，可被新局/悔棋打断） */
+  function scheduleAI() {
+    clearTimeout(state.aiTimer);
+    if (state.gameOver || !isAITurn()) return;
+    state.aiTimer = setTimeout(() => {
+      state.aiTimer = null;
+      aiMove();
+    }, 350 + Math.random() * 350);
+  }
+
+  /** AI 落子入口 */
+  function aiMove() {
+    if (state.gameOver || !isAITurn()) return;
+    const move = aiChooseMove();
+    if (!move) return;
+    placeStone(move.r, move.c);
+  }
+
+  /** 提取以 (r,c) 为中心、方向 (dr,dc) 的 9 格线：1=己方 0=空 2=对方或边界（(r,c) 记 1） */
+  function buildLine(b, r, c, dr, dc, player) {
+    const line = [];
+    for (let k = -4; k <= 4; k++) {
+      if (k === 0) { line.push(1); continue; }
+      const nr = r + dr * k, nc = c + dc * k;
+      if (!inBoard(nr, nc)) { line.push(2); continue; }
+      const v = b[nr][nc];
+      line.push(v === EMPTY ? 0 : (v === player ? 1 : 2));
+    }
+    return line;
+  }
+
+  function windowsOf(line, size) {
+    const res = [];
+    for (let i = 0; i + size <= line.length; i++) res.push(line.slice(i, i + size));
+    return res;
+  }
+
+  /** 5 窗全己方（连五） */
+  function hasFive(line) {
+    return windowsOf(line, 5).some(w => w.every(v => v === 1));
+  }
+
+  /** 活四：_1111_ */
+  function hasOpenFour(line) {
+    return windowsOf(line, 6).some(w => w[0] === 0 && w[5] === 0 && w.slice(1, 5).every(v => v === 1));
+  }
+
+  /** 冲四数量：5 窗内 4 子 1 空 */
+  function countRushFour(line) {
+    return windowsOf(line, 5).filter(w => w.includes(0) && w.filter(v => v === 1).length === 4).length;
+  }
+
+  /** 活三：填一子可成活四 */
+  function hasOpenThree(line) {
+    for (let i = 0; i < line.length; i++) {
+      if (line[i] !== 0) continue;
+      line[i] = 1;
+      const ok = hasOpenFour(line);
+      line[i] = 0;
+      if (ok) return true;
+    }
+    return false;
+  }
+
+  /** 5 窗内 3 子 2 空（眠三）数量 */
+  function countSleepThree(line) {
+    return windowsOf(line, 5).filter(w => !w.includes(2) && w.filter(v => v === 1).length === 3).length;
+  }
+
+  /** 单方向棋型分值 */
+  function dirScore(line) {
+    let s = 0;
+    if (hasFive(line)) return 1000000;
+    if (hasOpenFour(line)) s += 50000;
+    s += Math.min(2, countRushFour(line)) * 8000;
+    if (hasOpenThree(line)) s += 6000;
+    s += Math.min(3, countSleepThree(line)) * 800;
+    // 活二 / 眠二
+    if (windowsOf(line, 6).some(w => !w.includes(2) && w.filter(v => v === 1).length === 2)) s += 300;
+    else if (windowsOf(line, 5).some(w => !w.includes(2) && w.filter(v => v === 1).length === 2)) s += 120;
+    else if (windowsOf(line, 4).some(w => !w.includes(2) && w.filter(v => v === 1).length === 1)) s += 25;
+    return s;
+  }
+
+  /** 假设 (r,c) 已是 player 的棋子，评估该点四方向棋型总分 */
+  function evalPoint(b, r, c, player) {
+    let s = 0;
+    for (const [dr, dc] of DIRS) s += dirScore(buildLine(b, r, c, dr, dc, player));
+    return s;
+  }
+
+  /** 候选点：已有棋子 2 格范围内的空点；空盘返回天元 */
+  function genCandidates(b) {
+    const set = new Set();
+    let hasStone = false;
+    for (let r = 0; r < BOARD_SIZE; r++) {
+      for (let c = 0; c < BOARD_SIZE; c++) {
+        if (b[r][c] === EMPTY) continue;
+        hasStone = true;
+        for (let dr = -2; dr <= 2; dr++) {
+          for (let dc = -2; dc <= 2; dc++) {
+            const nr = r + dr, nc = c + dc;
+            if (inBoard(nr, nc) && b[nr][nc] === EMPTY) set.add(nr * BOARD_SIZE + nc);
+          }
+        }
+      }
+    }
+    if (!hasStone) return [{ r: 7, c: 7 }];
+    return Array.from(set, v => ({ r: Math.floor(v / BOARD_SIZE), c: v % BOARD_SIZE }));
+  }
+
+  /** 按当前难度选出 AI 落点 */
+  function aiChooseMove() {
+    const b = state.board;
+    const me = state.current;
+    const opp = me === BLACK ? WHITE : BLACK;
+    let pool = genCandidates(b);
+
+    // 开启禁手时 AI 主动规避禁手点
+    if (settings.forbidden && me === BLACK) {
+      const legal = pool.filter(m => !forbiddenCheck(b, m.r, m.c));
+      if (legal.length) pool = legal;
+    }
+
+    // 一层评分：进攻 + 防守
+    const scored = pool.map(m => {
+      b[m.r][m.c] = me;
+      const atk = evalPoint(b, m.r, m.c, me);
+      b[m.r][m.c] = opp;
+      const def = evalPoint(b, m.r, m.c, opp);
+      b[m.r][m.c] = EMPTY;
+      return { r: m.r, c: m.c, score: atk + def * 0.95 };
+    }).sort((a, z) => z.score - a.score);
+
+    if (scored.length === 0) return null;
+
+    if (settings.difficulty === 'easy') {
+      // 强噪声：会漏防、会失误
+      let best = scored[0], bestN = -Infinity;
+      for (const m of scored) {
+        const n = m.score * (0.25 + Math.random()) + Math.random() * 10;
+        if (n > bestN) { bestN = n; best = m; }
+      }
+      return best;
+    }
+
+    if (settings.difficulty === 'normal') {
+      return scored[0];
+    }
+
+    // 困难：对前 8 个候选做两层搜索（扣减对手最佳应手的威胁）
+    let best = scored[0], bestVal = -Infinity;
+    for (const m of scored.slice(0, 8)) {
+      b[m.r][m.c] = me;
+      let oppBest = 0;
+      for (const rp of genCandidates(b)) {
+        b[rp.r][rp.c] = opp;
+        const v = evalPoint(b, rp.r, rp.c, opp);
+        b[rp.r][rp.c] = EMPTY;
+        if (v > oppBest) oppBest = v;
+        if (oppBest >= 1000000) break;   // 对手可连五，提前终止
+      }
+      b[m.r][m.c] = EMPTY;
+      const val = m.score - oppBest * 0.9;
+      if (val > bestVal) { bestVal = val; best = m; }
+    }
+    return best;
+  }
+
+  /** 黑棋禁手检测（简化连珠：长连 / 双四 / 双活三），假设 (r,c) 为空 */
+  function isForbiddenMove(r, c) {
+    const b = state.board;
+    b[r][c] = BLACK;
+    const res = forbiddenCheck(b, r, c);
+    b[r][c] = EMPTY;
+    return res;
+  }
+
+  function forbiddenCheck(b, r, c) {
+    const lines = DIRS.map(([dr, dc]) => buildLine(b, r, c, dr, dc, BLACK));
+
+    // 长连（六子及以上）禁手
+    for (const line of lines) {
+      if (line.join('').indexOf('111111') >= 0) return true;
+    }
+    // 恰好连五即获胜，不算禁手
+    for (const line of lines) {
+      if (hasFive(line)) return false;
+    }
+    // 双四禁手（同一方向出现两个冲四也计入）
+    let fours = 0;
+    for (const line of lines) fours += Math.min(2, countRushFour(line));
+    if (fours >= 2) return true;
+    // 双活三禁手
+    let threes = 0;
+    for (const line of lines) {
+      if (hasOpenThree(line)) threes++;
+    }
+    return threes >= 2;
+  }
+
   /** 悔棋 */
   function undoMove() {
     if (state.gameOver) return;
     if (state.moves.length === 0) return;
+    clearTimeout(state.aiTimer);
 
-    const last = state.moves.pop();
-    state.board[last.r][last.c] = EMPTY;
-    state.current = last.player;
-
-    // 上一步
-    if (state.moves.length > 0) {
-      const prev = state.moves[state.moves.length - 1];
-      state.lastMove = { r: prev.r, c: prev.c };
+    if (settings.mode !== 'pvp') {
+      // 人机模式：若最后一手是 AI，连同玩家那手一起撤销
+      const aiSide = settings.mode === 'ai_black' ? WHITE : BLACK;
+      const steps = state.moves[state.moves.length - 1].player === aiSide ? 2 : 1;
+      for (let i = 0; i < steps && state.moves.length > 0; i++) popOne();
     } else {
-      state.lastMove = null;
+      popOne();
     }
 
-    state.selectedHist = -1;
     state.hoverPos = null;
 
     // 计时不变，继续当前方计时
@@ -933,6 +1390,21 @@
 
     draw();
     updateUI();
+    scheduleAI();
+  }
+
+  /** 弹出最后一手 */
+  function popOne() {
+    const last = state.moves.pop();
+    state.board[last.r][last.c] = EMPTY;
+    state.current = last.player;
+    if (state.moves.length > 0) {
+      const prev = state.moves[state.moves.length - 1];
+      state.lastMove = { r: prev.r, c: prev.c };
+    } else {
+      state.lastMove = null;
+    }
+    state.selectedHist = -1;
   }
 
   /** 新一局 */
@@ -940,6 +1412,7 @@
     resetBoard();
     draw();
     updateUI();
+    scheduleAI();
   }
 
   // ============================================================
@@ -970,6 +1443,7 @@
       stopTimer();
       return;
     }
+    if (!settings.timed) return;
 
     if (state.current === BLACK) {
       state.blackTime--;
@@ -996,16 +1470,23 @@
     state.winner = (timeoutPlayer === BLACK) ? WHITE : BLACK;
     state.stats[state.winner === BLACK ? 'black' : 'white']++;
     saveStats();
+    Sound.win();
     draw();
     updateUI();
   }
 
   function updateTimerDisplay() {
-    blackTD.textContent = formatTime(state.blackTime);
-    whiteTD.textContent = formatTime(state.whiteTime);
-
-    blackTD.classList.toggle('low-time', state.blackTime <= 60 && !state.gameOver && state.current === BLACK);
-    whiteTD.classList.toggle('low-time', state.whiteTime <= 60 && !state.gameOver && state.current === WHITE);
+    if (!settings.timed) {
+      blackTD.textContent = '—:—';
+      whiteTD.textContent = '—:—';
+      blackTD.classList.remove('low-time');
+      whiteTD.classList.remove('low-time');
+    } else {
+      blackTD.textContent = formatTime(state.blackTime);
+      whiteTD.textContent = formatTime(state.whiteTime);
+      blackTD.classList.toggle('low-time', state.blackTime <= 60 && !state.gameOver && state.current === BLACK);
+      whiteTD.classList.toggle('low-time', state.whiteTime <= 60 && !state.gameOver && state.current === WHITE);
+    }
 
     blackTR.classList.toggle('active-turn', state.current === BLACK && !state.gameOver);
     whiteTR.classList.toggle('active-turn', state.current === WHITE && !state.gameOver);
@@ -1037,7 +1518,8 @@
       statusEl.className = 'status-bar';
       const stoneClass = state.current === BLACK ? 'black' : 'white';
       const label = state.current === BLACK ? '黑方' : '白方';
-      statusEl.innerHTML = `<span class="status-stone ${stoneClass}"></span> ${label}落子`;
+      const suffix = isAITurn() ? '（AI 思考中…）' : '落子';
+      statusEl.innerHTML = `<span class="status-stone ${stoneClass}"></span> ${label}${suffix}`;
     }
 
     // 悔棋按钮
@@ -1103,6 +1585,46 @@
 
   undoBtn.addEventListener('click', undoMove);
   newBtn.addEventListener('click', newGame);
+
+  // 对战模式切换（切换即开新局）
+  modeBtns.forEach(b => {
+    b.addEventListener('click', () => {
+      if (settings.mode === b.dataset.mode) return;
+      settings.mode = b.dataset.mode;
+      saveSettings();
+      syncSettingsUI();
+      newGame();
+    });
+  });
+
+  // 选项开关
+  optForbidden.addEventListener('change', () => {
+    settings.forbidden = optForbidden.checked;
+    saveSettings();
+    draw();
+  });
+  optTimed.addEventListener('change', () => {
+    settings.timed = optTimed.checked;
+    saveSettings();
+    if (settings.timed && !state.gameOver) {
+      state.blackTime = TOTAL_TIME;
+      state.whiteTime = TOTAL_TIME;
+      state.timerActive = true;
+      restartTimer();
+    } else if (!settings.timed) {
+      state.timerActive = false;
+      stopTimer();
+    }
+    updateUI();
+  });
+  optSound.addEventListener('change', () => {
+    settings.sound = optSound.checked;
+    saveSettings();
+  });
+  aiDifficultySel.addEventListener('change', () => {
+    settings.difficulty = aiDifficultySel.value;
+    saveSettings();
+  });
 
   // ============================================================
   //  启动
