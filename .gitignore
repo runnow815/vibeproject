@@ -9,3 +9,6 @@
 # OS files
 .DS_Store
 Thumbs.db
+
+# ZCode 本地会话数据
+.zcode/
