@@ -126,6 +126,11 @@ button{font-family:inherit;cursor:pointer}
 .btnrow{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
 .bb{padding:9px 24px;font-size:16px;letter-spacing:3px;border-radius:4px;border:1.5px solid var(--ink);background:transparent;color:var(--ink)}
 .bb.pri{background:var(--cinnabar);color:#fbf6e9;border-color:var(--cinnabar)}
+.codebox{
+  width:100%;height:58px;font-size:11px;line-height:1.4;color:var(--ink2);resize:none;
+  border:1px dashed var(--ink2);border-radius:4px;background:#fbf6e9;padding:5px 7px;
+  font-family:Consolas,monospace;word-break:break-all;margin:4px 0;
+}
 /* ===== 响应式断点 ===== */
 @media (max-width:700px){ /* 手机竖屏 */
   :root{--stage-reserve:196px}
@@ -322,7 +327,8 @@ function createGame(opts){
     t: 0, over: 0,
     castles: [], armies: [], camps: [],
     ink: [0, CFG.INK_START, CFG.INK_START, CFG.INK_START, CFG.INK_START],
-    hand: [], cmdQueue: [], events: [],
+    hands: { 1: [], 2: [] },           // 双玩家手牌（PVE 中 2 号为 AI，不使用）
+    cmdQueue: [], events: [],
     effects: { rushT: 0 },
     stats: { capturedBy: { 1: 0, 2: 0, 3: 0, 4: 0 }, cardsUsed: 0 },
     aiAcc: { 1: 0, 2: 0, 3: 0, 4: 0 }, aiCardCd: { 1: 0, 2: 0, 3: 0, 4: 0 },
@@ -332,7 +338,8 @@ function createGame(opts){
     _aid: 1,
   };
   mapGen(sim, opts);
-  for (var i = 0; i < 3; i++) sim.hand.push(drawCard(sim));
+  for (var i = 0; i < 3; i++){ sim.hands[1].push(drawCard(sim)); sim.hands[2].push(drawCard(sim)); }
+  sim.hand = sim.hands[1];           // 兼容别名：1 号玩家手牌
   return sim;
 }
 
@@ -486,7 +493,7 @@ function applyCard(sim, key, owner, targetId){
 }
 function canPlay(sim, slot, owner){
   owner = owner || 1;
-  var key = sim.hand[slot]; if (!key) return { ok: false, reason: '无此卡' };
+  var key = sim.hands[owner][slot]; if (!key) return { ok: false, reason: '无此卡' };
   var card = CARD_BY_KEY[key], i;
   if (sim.ink[owner] < card.cost) return { ok: false, reason: '墨量不足' };
   var hasOwn = false, hasFoe = false, hasEnemy = false, hasNeutral = false, hasEnemyArmy = false;
@@ -509,18 +516,20 @@ function canPlay(sim, slot, owner){
   }
   return { ok: true, reason: '' };
 }
-function cardPlay(sim, slot, targetId){
+function cardPlay(sim, slot, targetId, owner){
+  owner = owner || 1;
   if (sim.over) return false;
-  var key = sim.hand[slot]; if (!key) return false;
+  var hand = sim.hands[owner];
+  var key = hand[slot]; if (!key) return false;
   var card = CARD_BY_KEY[key];
-  if (sim.ink[1] < card.cost) return false;
-  if (!validTarget(sim, key, 1, targetId)) return false;
-  applyCard(sim, key, 1, targetId);
-  sim.ink[1] -= card.cost;
+  if (sim.ink[owner] < card.cost) return false;
+  if (!validTarget(sim, key, owner, targetId)) return false;
+  applyCard(sim, key, owner, targetId);
+  sim.ink[owner] -= card.cost;
   sim.stats.cardsUsed++;
-  sim.hand.splice(slot, 1);
-  sim.hand.push(drawCard(sim));
-  sim.events.push({ type: 'card', key: key, name: card.name });
+  hand.splice(slot, 1);
+  hand.push(drawCard(sim));
+  sim.events.push({ type: 'card', key: key, name: card.name, by: owner });
   return true;
 }
 
@@ -835,7 +844,7 @@ var Sound = {
 
 /* ===== 状态 ===== */
 var mode = 'menu';              // menu | playing | paused | over
-var sim = null;                 // 当前对局
+var sim = null;                 // 当前对局（联机客机为镜像状态）
 var menuSim = null;             // 大厅环境对局（AI 混战背景）
 var selection = [];             // [{k:'c'|'p', id}]
 var ratio = 1;
@@ -844,6 +853,10 @@ var floats = [], fxs = [];      // 表现层特效
 var boxRect = null;             // 框选 {x,y,w,h}
 var dragArrow = null;           // 拖拽派遣预览 {x,y,tx,ty,count}
 var cfg = { opponents: lastCfg.opponents, size: lastCfg.size, diff: lastCfg.diff };
+var mySide = 1;                 // 本机阵营：PVE 恒为 1；联机主机 1 / 客机 2
+var netRole = 'none';           // none | host | guest
+var netEvts = [];               // 主机待随快照下发的表现事件
+var netT = 0;                   // 快照节流计时
 var STEP = 1 / 30, acc = 0, lastT = 0, hudT = 0;
 
 /* ===== 工具 ===== */
@@ -915,6 +928,14 @@ function showMenu(){
       '<div class="ptitle">卷 闯关 <small>进度 ' + Math.min(progress, 10) + ' / 10</small></div>' +
       '<div class="lvlgrid">' + lvls + '</div>' +
     '</div>' +
+    '<div class="pbox">' +
+      '<div class="ptitle">👥 好友对战 <small>1v1 · WebRTC 直连</small></div>' +
+      '<div class="btnrow" style="margin-bottom:8px">' +
+        '<button class="bb pri" id="btnHost">创建房间</button>' +
+        '<button class="bb" id="btnJoin">加入房间</button>' +
+      '</div>' +
+      '<div id="pvpBox"></div>' +
+    '</div>' +
     '<div class="mfoot">' +
       '<button class="tbtn" id="btnSound">♪ 音效：' + (soundOn ? '开' : '关') + '</button>' +
       '<span>' + (best ? '最快胜利 ' + fmt(best) : '尚未凯旋') + '</span>' +
@@ -924,6 +945,12 @@ function showMenu(){
   document.getElementById('btnSound').onclick = function(){
     soundOn = !soundOn; save('ink.sound', soundOn ? 1 : 0); showMenu();
   };
+  document.getElementById('btnHost').onclick = function(){ Sound.select(); Net.hostRoom(); };
+  document.getElementById('btnJoin').onclick = function(){ Sound.select(); Net.joinUI(); };
+  if (location.protocol.indexOf('http') === 0){
+    var qs = new URLSearchParams(location.search);
+    if (qs.get('join')) Net.joinUI(qs.get('join'));
+  }
   elPanel.querySelectorAll('[data-op]').forEach(function(b){
     b.onclick = function(){ cfg.opponents = +b.dataset.op; save('ink.cfg', cfg); Sound.select(); showMenu(); };
   });
@@ -954,13 +981,13 @@ function showPause(){
 }
 
 function showResult(){
-  var win = sim.over === 1;
+  var win = sim.over === mySide;
   if (win){
     Sound.win();
     if (sim.opts.mode === 'campaign'){
       var lv = sim.opts.level;
       if (lv >= progress){ progress = Math.min(10, lv + 1); save('ink.progress', progress); }
-    } else if (!best || sim.t < best){ best = Math.floor(sim.t); save('ink.best', best); }
+    } else if (netRole === 'none' && (!best || sim.t < best)){ best = Math.floor(sim.t); save('ink.best', best); }
   } else Sound.lose();
 
   var campMsg = '';
@@ -968,6 +995,8 @@ function showResult(){
     campMsg = win ? (sim.opts.level >= 10 ? '<br><span style="color:var(--cinnabar)">十关俱破 · 问鼎天下！</span>'
                    : '<br><span style="color:var(--cinnabar)">第 ' + (sim.opts.level + 1) + ' 关已解锁</span>')
                   : '<br><span>第 ' + sim.opts.level + ' 关可再战</span>';
+  } else if (sim.opts.mode === 'pvp'){
+    campMsg = '<br><span>好' + (win ? '友对战 · 技高一筹' : '友对战 · 胜败乃兵家常事') + '</span>';
   }
   showOverlay(
     '<div class="stamp ' + (win ? 'win">胜<small>JIANGSHAN</small>' : 'lose">败<small>ZHENGUO</small>') + '</div>' +
@@ -984,10 +1013,12 @@ function showResult(){
 
 /* ===== 流程：开局 / 暂停 / 结束 ===== */
 function startGame(opts){
+  mySide = opts.self || 1;
   sim = Sim.createGame(opts);
   selection = []; aim = null; floats = []; fxs = []; boxRect = null; dragArrow = null;
   acc = 0;
   mode = 'playing';
+  elPause.style.visibility = netRole === 'guest' ? 'hidden' : 'visible';   // 联机暂停权在房主
   hideOverlay();
   setHint(HINT_DEFAULT);
   renderHand();
@@ -1006,13 +1037,34 @@ function startCampaign(lv){
 }
 function restart(){
   if (!sim) { showMenu(); return; }
+  if (netRole !== 'none'){                       // 联机：由主机重开，客机请求
+    if (netRole === 'host') Net.hostRestart();
+    else Net.send({ t: 'again' });
+    setHint('已发送请求 · 等待开局');
+    return;
+  }
   if (sim.opts.mode === 'campaign') startCampaign(sim.opts.level);
   else startQuick();
 }
-function backToMenu(){ Sound.ensure(); showMenu(); }
-function pause(){ if (mode !== 'playing') return; mode = 'paused'; showPause(); }
-function resume(){ if (mode !== 'paused') return; mode = 'playing'; hideOverlay(); }
-function togglePause(){ if (mode === 'playing') pause(); else if (mode === 'paused') resume(); }
+function backToMenu(){
+  Sound.ensure();
+  Net.teardown();
+  showMenu();
+}
+function pause(){
+  if (mode !== 'playing') return;
+  mode = 'paused'; showPause();
+  if (netRole === 'host') Net.send({ t: 'pause', on: true });
+}
+function resume(){
+  if (mode !== 'paused') return;
+  mode = 'playing'; hideOverlay();
+  if (netRole === 'host') Net.send({ t: 'pause', on: false });
+}
+function togglePause(){
+  if (netRole === 'guest') return;               // 联机时暂停权在房主
+  if (mode === 'playing') pause(); else if (mode === 'paused') resume();
+}
 function endGame(){
   mode = 'over';
   selection = []; aim = null;
@@ -1022,11 +1074,13 @@ function endGame(){
 }
 
 /* ===== 卡牌栏 ===== */
-function inkOK(slot){ return sim && sim.ink[1] >= CARD_BY_KEY[sim.hand[slot]].cost; }
+function myHand(){ return sim && sim.hands ? sim.hands[mySide] : []; }
+function inkOK(slot){ return sim && sim.ink[mySide] >= CARD_BY_KEY[myHand()[slot]].cost; }
 function renderHand(){
+  var hand = myHand();
   var html = '';
   for (var i = 0; i < 3; i++){
-    var key = sim ? sim.hand[i] : null;
+    var key = sim ? hand[i] : null;
     if (!key){ html += '<button class="card dim" disabled></button>'; continue; }
     var card = CARD_BY_KEY[key];
     var cls = 'card' + (mode === 'playing' && !inkOK(i) ? ' dim' : '') + (aim && aim.slot === i ? ' aim' : '');
@@ -1042,7 +1096,7 @@ function renderHand(){
 function onCardClick(slot, btn){
   if (mode !== 'playing') return;
   if (aim && aim.slot === slot){ cancelAim(); return; }
-  var cp = Sim.canPlay(sim, slot, 1);
+  var cp = Sim.canPlay(sim, slot, mySide);
   if (!cp.ok){
     btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake');
     elInkwrap.classList.remove('flash'); void elInkwrap.offsetWidth; elInkwrap.classList.add('flash');
@@ -1050,15 +1104,26 @@ function onCardClick(slot, btn){
     Sound.err();
     return;
   }
-  var card = CARD_BY_KEY[sim.hand[slot]];
+  var card = CARD_BY_KEY[myHand()[slot]];
   if (card.target){
     aim = { slot: slot };
     elHint.textContent = '「' + card.name + '」· 点击目标城池发动（再点卡取消）';
     renderHand();
     Sound.select();
   } else {
-    if (Sim.cardPlay(sim, slot)){ Sound.card(); renderHand(); }
+    playCard(slot);
   }
+}
+/* 发动无目标卡：主机本地结算，客机发指令交主机结算 */
+function playCard(slot, targetId){
+  if (netRole === 'guest'){
+    Net.send({ t: 'cmd', kind: 'card', slot: slot, target: targetId == null ? -1 : targetId });
+    Sound.card();
+    renderHand();
+    return true;
+  }
+  if (Sim.cardPlay(sim, slot, targetId, mySide)){ Sound.card(); renderHand(); return true; }
+  return false;
 }
 function cancelAim(){
   aim = null;
@@ -1105,23 +1170,25 @@ function selToggle(k, id){
 }
 function pruneSelection(){
   selection = selection.filter(function(s){
-    if (s.k === 'c'){ var c = sim.castles[s.id]; return c && c.owner === 1; }
-    var p = sim.camps[s.id]; return p && p.owner === 1;
+    if (s.k === 'c'){ var c = sim.castles[s.id]; return c && c.owner === mySide; }
+    var p = sim.camps[s.id]; return p && p.owner === mySide;
   });
 }
 function dispatch(sources, target){
   pruneSelection();
   var from = sources.filter(function(s){
-    return s.k === 'c' ? (sim.castles[s.id] && sim.castles[s.id].owner === 1)
-                       : (sim.camps[s.id] && sim.camps[s.id].owner === 1);
+    return s.k === 'c' ? (sim.castles[s.id] && sim.castles[s.id].owner === mySide)
+                       : (sim.camps[s.id] && sim.camps[s.id].owner === mySide);
   });
   if (!from.length) return;
-  Sim.command(sim, {
-    owner: 1,
+  var cmd = {
+    owner: mySide,
     from: from,
     to: target.k === 'c' ? { k: 'c', id: target.id } : { k: 'pt', x: target.x, y: target.y },
     ratio: ratio,
-  });
+  };
+  if (netRole === 'guest') Net.send({ t: 'cmd', kind: 'send', cmd: cmd });
+  else Sim.command(sim, cmd);
   selection = [];                                    // 派遣后清空选择，防止误触列阵
   setHint('已派遣 · 重新框选可再派<br>点空地 = 列阵屯兵');
   Sound.send();
@@ -1133,11 +1200,11 @@ function boxSelect(x0, y0, x1, y1){
   boxRect = { x: lx, y: ty, w: rx - lx, h: by - ty };
   selection = [];
   sim.castles.forEach(function(c){
-    if (c.owner === 1 && c.x >= lx - 10 && c.x <= rx + 10 && c.y >= ty - 10 && c.y <= by + 10)
+    if (c.owner === mySide && c.x >= lx - 10 && c.x <= rx + 10 && c.y >= ty - 10 && c.y <= by + 10)
       selection.push({ k: 'c', id: c.id });
   });
   sim.camps.forEach(function(p){
-    if (p.owner === 1 && p.x >= lx - 10 && p.x <= rx + 10 && p.y >= ty - 10 && p.y <= by + 10)
+    if (p.owner === mySide && p.x >= lx - 10 && p.x <= rx + 10 && p.y >= ty - 10 && p.y <= by + 10)
       selection.push({ k: 'p', id: p.id });
   });
 }
@@ -1151,7 +1218,7 @@ canvas.addEventListener('pointerdown', function(e){
   var v = toVirtual(e);
   ptr.down = true; ptr.moved = false;
   ptr.sx = v.x; ptr.sy = v.y; ptr.x = v.x; ptr.y = v.y;
-  var c = hitCastle(v, 1), p = c ? null : hitCamp(v, 1);
+  var c = hitCastle(v, mySide), p = c ? null : hitCamp(v, mySide);
   ptr.from = c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
 });
 canvas.addEventListener('pointermove', function(e){
@@ -1181,11 +1248,10 @@ canvas.addEventListener('pointerup', function(e){
 
   if (aim){                                          // 瞄准模式：点目标 / 点空白取消
     var t = hitCastle(v);
-    if (t && Sim.validTarget(sim, sim.hand[aim.slot], 1, t.id)){
+    if (t && Sim.validTarget(sim, myHand()[aim.slot], mySide, t.id)){
       var slot = aim.slot;
-      var cardName = CARD_BY_KEY[sim.hand[slot]].name;
-      if (Sim.cardPlay(sim, slot, t.id)){
-        Sound.card();
+      var cardName = CARD_BY_KEY[myHand()[slot]].name;
+      if (playCard(slot, t.id)){
         floats.push({ x: t.x, y: t.y - castleR(t) - 14, txt: '「' + cardName + '」', color: '#b33327', t: 0, life: 1 });
         cancelAim();
       }
@@ -1212,9 +1278,9 @@ canvas.addEventListener('pointerup', function(e){
   }
 
   /* 点按 */
-  var c = hitCastle(v), p = c ? null : hitCamp(v, 1);
-  if (c && c.owner === 1){ selToggle('c', c.id); return; }
-  if (p && p.owner === 1){ selToggle('p', p.id); return; }
+  var c = hitCastle(v), p = c ? null : hitCamp(v, mySide);
+  if (c && c.owner === mySide){ selToggle('c', c.id); return; }
+  if (p && p.owner === mySide){ selToggle('p', p.id); return; }
   if (selection.length){
     dispatch(selection, c ? { k: 'c', id: c.id } : { k: 'pt', x: v.x, y: v.y });
     return;
@@ -1233,24 +1299,24 @@ window.addEventListener('keydown', function(e){
 /* ===== HUD ===== */
 function updateHud(force){
   if (!sim) return;
-  elInkfill.style.width = (sim.ink[1] / CFG.INK_MAX * 100) + '%';
-  elInkval.textContent = (Math.floor(sim.ink[1] * 10) / 10).toFixed(1);
+  elInkfill.style.width = (sim.ink[mySide] / CFG.INK_MAX * 100) + '%';
+  elInkval.textContent = (Math.floor(sim.ink[mySide] * 10) / 10).toFixed(1);
   elTime.textContent = fmt(sim.t);
   var my = 0, foe = 0;
-  sim.castles.forEach(function(c){ if (c.owner === 1) my++; else if (c.owner >= 2) foe++; });
+  sim.castles.forEach(function(c){ if (c.owner === mySide) my++; else if (c.owner !== 0) foe++; });
   elMy.textContent = my; elFoe.textContent = foe;
   renderHandThrottled(force);
 }
 var lastHandSig = '';
 function renderHandThrottled(force){
-  var sig = mode + '|' + sim.hand.join(',') + '|' + Math.floor(sim.ink[1]) + '|' + (aim ? aim.slot : -1);
+  var sig = mode + '|' + myHand().join(',') + '|' + Math.floor(sim.ink[mySide]) + '|' + (aim ? aim.slot : -1);
   if (force || sig !== lastHandSig){ lastHandSig = sig; renderHand(); }
 }
 
 /* ===== 事件 → 表现层 ===== */
-function drainEvents(){
-  for (var i = 0; i < sim.events.length; i++){
-    var ev = sim.events[i];
+function handleEvents(list){
+  for (var i = 0; i < list.length; i++){
+    var ev = list[i];
     switch (ev.type){
       case 'capture':
         fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.7, color: ev.owner === 1 ? '#b33327' : '#2c5f6e' });
@@ -1281,7 +1347,12 @@ function drainEvents(){
         break;
     }
   }
-  sim.events.length = 0;
+}
+/* 消费当前 sim 的事件：主机转发给客机一份，再本地渲染 */
+function drainEvents(){
+  var list = sim.events.splice(0, sim.events.length);
+  if (netRole === 'host') netEvts = netEvts.concat(list);
+  handleEvents(list);
 }
 
 /* ===== 渲染 ===== */
@@ -1387,7 +1458,7 @@ function draw(simToDraw, tGlobal){
   for (i = 0; i < simToDraw.castles.length; i++){
     var c = simToDraw.castles[i];
     var aimingValid = false;
-    if (aim && simToDraw === sim) aimingValid = Sim.validTarget(sim, sim.hand[aim.slot], 1, c.id);
+    if (aim && simToDraw === sim) aimingValid = Sim.validTarget(sim, myHand()[aim.slot], mySide, c.id);
     drawCastle(c, simToDraw === sim && selHas('c', c.id), aimingValid, tGlobal);
   }
 
@@ -1428,14 +1499,30 @@ function loop(t){
   lastT = t;
   var i;
   if (mode === 'playing' && sim){
-    acc += dt;
-    while (acc >= STEP * 1000){
-      Sim.step(sim, STEP);
-      acc -= STEP * 1000;
-      if (sim.over) break;
+    if (netRole === 'guest'){
+      /* 客机：不跑模拟，只做航位推算（快照间平滑部队位置） */
+      var ddt = Math.min(100, dt) / 1000;
+      for (i = 0; i < sim.armies.length; i++){
+        var ra = sim.armies[i];
+        var rsp = CFG.SPEED * (sim.effects.rushT > 0 && ra.owner === mySide ? 2 : 1) * ddt;
+        var rdx = ra.tx - ra.x, rdy = ra.ty - ra.y, rd = Math.sqrt(rdx*rdx + rdy*rdy);
+        if (rd <= rsp){ ra.x = ra.tx; ra.y = ra.ty; }
+        else { ra.x += rdx / rd * rsp; ra.y += rdy / rd * rsp; }
+      }
+    } else {
+      acc += dt;
+      while (acc >= STEP * 1000){
+        Sim.step(sim, STEP);
+        acc -= STEP * 1000;
+        if (sim.over) break;
+      }
+      drainEvents();
+      if (netRole === 'host'){
+        netT += dt;
+        if (netT >= 100){ netT = 0; Net.pushSnapshot(); }
+      }
+      if (sim.over) endGame();
     }
-    drainEvents();
-    if (sim.over) endGame();
     hudT += dt;
     if (hudT > 250){ hudT = 0; updateHud(); }
   } else if (mode === 'menu' && menuSim){
@@ -1457,11 +1544,218 @@ function loop(t){
   requestAnimationFrame(loop);
 }
 
+/* ===== 联机（WebRTC P2P · 主机权威状态同步） =====
+ * 信令：邀请/应答码（ICE 收集完毕后的 SDP，base64）——静态托管即可联机，无需服务器。
+ * 主机跑唯一模拟，每 100ms 广播压缩快照；客机渲染镜像 + 航位推算，指令发回主机执行。
+ */
+function b64e(s){ return btoa(unescape(encodeURIComponent(s))); }
+function b64d(s){ return decodeURIComponent(escape(atob(s))); }
+function rtcConfig(){ return { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302'] }] }; }
+function gatherIce(pc){
+  return new Promise(function(res){
+    if (pc.iceGatheringState === 'complete') return res();
+    pc.addEventListener('icegatheringstatechange', function(){
+      if (pc.iceGatheringState === 'complete') res();
+    });
+    setTimeout(res, 3500);
+  });
+}
+function inviteUrl(kind, code){
+  if (location.protocol.indexOf('http') !== 0) return null;
+  return location.origin + location.pathname + '?' + kind + '=' + encodeURIComponent(code);
+}
+function fallbackCopy(txt){
+  var ta = document.createElement('textarea');
+  ta.value = txt; ta.style.position = 'fixed'; ta.style.opacity = '0';
+  document.body.appendChild(ta); ta.select();
+  try { document.execCommand('copy'); } catch (e) {}
+  document.body.removeChild(ta);
+}
+function copyText(txt, btn){
+  var done = function(){ if (btn){ var old = btn.textContent; btn.textContent = '已复制 ✓'; setTimeout(function(){ btn.textContent = old; }, 1200); } };
+  if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function(){ fallbackCopy(txt); done(); });
+  else { fallbackCopy(txt); done(); }
+}
+function pvpStatus(html){ var box = document.getElementById('pvpBox'); if (box) box.innerHTML = html; }
+function extractCode(raw, key){
+  var m = String(raw || '').match(new RegExp(key + '=([A-Za-z0-9+/=_%-]+)'));
+  try { return b64d(m ? decodeURIComponent(m[1]) : String(raw || '').trim()); } catch (e){ return null; }
+}
+
+var Net = {
+  pc: null, ch: null, role: 'none',
+  hostRoom: async function(){
+    this.teardown();
+    if (typeof RTCPeerConnection === 'undefined'){ pvpStatus('<div class="rstat">当前浏览器不支持 WebRTC，无法联机</div>'); return; }
+    this.role = netRole = 'host';
+    try {
+      this.pc = new RTCPeerConnection(rtcConfig());
+      this.ch = this.pc.createDataChannel('ink');
+      this.bind(this.ch);
+      var offer = await this.pc.createOffer();
+      await this.pc.setLocalDescription(offer);
+      await gatherIce(this.pc);
+      var code = b64e(JSON.stringify(this.pc.localDescription));
+      var url = inviteUrl('join', code);
+      pvpStatus(
+        '<div class="rstat">① 把<b>邀请链接</b>发给朋友：<br>' +
+        (url
+          ? '<textarea class="codebox" id="invUrl" readonly>' + url + '</textarea><button class="tbtn" id="copyInv">复制邀请链接</button>'
+          : '<textarea class="codebox" id="invUrl" readonly>' + code + '</textarea><button class="tbtn" id="copyInv">复制联机码</button>') +
+        '</div><div class="rstat">② 收到朋友的<b>应答链接</b>后粘贴到这里：</div>' +
+        '<textarea class="codebox" id="ansIn" placeholder="粘贴应答链接或联机码"></textarea>' +
+        '<button class="tbtn" id="acceptAns">完成连接</button> <span id="pvpStat"></span>'
+      );
+      var net = this;
+      var invEl = document.getElementById('invUrl');
+      document.getElementById('copyInv').onclick = function(){ copyText(invEl.value, document.getElementById('copyInv')); };
+      document.getElementById('acceptAns').onclick = async function(){
+        try {
+          var desc = JSON.parse(extractCode(document.getElementById('ansIn').value, 'accept'));
+          await net.pc.setRemoteDescription(new RTCSessionDescription(desc));
+          document.getElementById('pvpStat').textContent = '连接中…';
+        } catch (e){ document.getElementById('pvpStat').textContent = '应答码无效'; }
+      };
+    } catch (e){ pvpStatus('<div class="rstat">创建失败：' + e.message + '</div>'); this.role = netRole = 'none'; }
+  },
+  joinUI: function(prefill){
+    this.teardown();
+    if (typeof RTCPeerConnection === 'undefined'){ pvpStatus('<div class="rstat">当前浏览器不支持 WebRTC，无法联机</div>'); return; }
+    this.role = netRole = 'guest';
+    pvpStatus(
+      '<div class="rstat">粘贴房主的<b>邀请链接</b>或联机码：</div>' +
+      '<textarea class="codebox" id="offIn" placeholder="粘贴邀请链接或联机码"></textarea>' +
+      '<button class="tbtn" id="doJoin">连接</button> <span id="pvpStat"></span>'
+    );
+    if (prefill) document.getElementById('offIn').value = prefill;
+    var net = this;
+    document.getElementById('doJoin').onclick = async function(){
+      try {
+        var desc = JSON.parse(extractCode(document.getElementById('offIn').value, 'join'));
+        net.pc = new RTCPeerConnection(rtcConfig());
+        net.pc.ondatachannel = function(e){ net.ch = e.channel; net.bind(net.ch); };
+        await net.pc.setRemoteDescription(new RTCSessionDescription(desc));
+        var ans = await net.pc.createAnswer();
+        await net.pc.setLocalDescription(ans);
+        await gatherIce(net.pc);
+        var code = b64e(JSON.stringify(net.pc.localDescription));
+        var url = inviteUrl('accept', code);
+        pvpStatus(
+          '<div class="rstat">② 把<b>应答链接</b>发回给房主，等 TA 完成连接：</div>' +
+          '<textarea class="codebox" id="ansUrl" readonly>' + (url || code) + '</textarea>' +
+          '<button class="tbtn" id="copyAns">复制</button><div id="pvpStat"></div>'
+        );
+        document.getElementById('copyAns').onclick = function(){ copyText(document.getElementById('ansUrl').value, document.getElementById('copyAns')); };
+      } catch (e){ document.getElementById('pvpStat').textContent = '邀请码无效'; }
+    };
+  },
+  bind: function(ch){
+    var net = this;
+    ch.onopen = function(){
+      if (net.role === 'host') net.hostRestart();
+      else pvpStatus('<div class="rstat" style="color:var(--lv)">✓ 已连接！等待房主开局…</div>');
+    };
+    ch.onclose = function(){ net.dropped(); };
+    ch.onmessage = function(e){ net.onMsg(e.data); };
+  },
+  dropped: function(){
+    this.pc = null; this.ch = null;
+    var wasInGame = mode === 'playing' || mode === 'paused';
+    this.role = netRole = 'none';
+    if (wasInGame){
+      mode = 'over';
+      showOverlay('<h1>断<i>·</i>连</h1><div class="motto">墨迹已散 · 对局终止</div><div class="btnrow"><button class="bb pri" id="btnMenu3">返回菜单</button></div>');
+      document.getElementById('btnMenu3').onclick = backToMenu;
+    }
+  },
+  teardown: function(){
+    if (this.ch){ try { this.ch.onclose = null; this.ch.close(); } catch (e){} }
+    if (this.pc){ try { this.pc.close(); } catch (e){} }
+    this.ch = null; this.pc = null; this.role = netRole = 'none';
+  },
+  send: function(obj){
+    if (this.ch && this.ch.readyState === 'open'){ try { this.ch.send(JSON.stringify(obj)); } catch (e){} }
+  },
+  hostRestart: function(){
+    if (this.role !== 'host') return;
+    var opts = { mode: 'pvp', opponents: 1, castles: cfg.size, diff: 'normal', noAI: true, self: 1, seed: (Math.random() * 1e9) | 0 };
+    startGame(opts);
+    netEvts = [];
+    this.send({ t: 'start', seed: opts.seed, size: opts.castles });
+    this.pushSnapshot();
+  },
+  pushSnapshot: function(){
+    if (!this.ch || this.ch.readyState !== 'open' || !sim) return;
+    this.send({
+      t: 'st', tm: +sim.t.toFixed(2), ov: sim.over, rt: +sim.effects.rushT.toFixed(1),
+      cs: sim.castles.map(function(c){ return [c.owner, c.level, +c.garrison.toFixed(1), +(c.shieldT > 0), +(c.weakT > 0), +(c.flashT > 0)]; }),
+      ar: sim.armies.map(function(a){ return [a.id, a.owner, a.count, +a.x.toFixed(1), +a.y.toFixed(1), +a.tx.toFixed(1), +a.ty.toFixed(1), a.tKind === 'c' ? 1 : 0, a.tid, a.srcId]; }),
+      cp: sim.camps.map(function(p){ return [p.id, p.owner, Math.round(p.count), +p.x.toFixed(1), +p.y.toFixed(1)]; }),
+      ink: [0, +sim.ink[1].toFixed(1), +sim.ink[2].toFixed(1)],
+      hd: { 1: sim.hands[1].slice(), 2: sim.hands[2].slice() },
+      cap: [sim.stats.capturedBy[1] || 0, sim.stats.capturedBy[2] || 0, sim.stats.cardsUsed || 0],
+      ev: netEvts.splice(0, netEvts.length),
+    });
+  },
+  onMsg: function(raw){
+    var d;
+    try { d = JSON.parse(raw); } catch (e){ return; }
+    if (d.t === 'start'){
+      if (this.role === 'guest') startGame({ mode: 'pvp', opponents: 1, castles: d.size, diff: 'normal', noAI: true, self: 2, seed: d.seed });
+      return;
+    }
+    if (d.t === 'pause'){
+      if (this.role !== 'guest') return;
+      if (d.on && mode === 'playing'){ mode = 'paused'; showOverlay('<h1>暂<i>·</i>停</h1><div class="motto">房主暂停了对局</div>'); }
+      else if (!d.on && mode === 'paused'){ mode = 'playing'; hideOverlay(); }
+      return;
+    }
+    if (d.t === 'again'){
+      if (this.role === 'host') this.hostRestart();
+      return;
+    }
+    if (d.t === 'cmd'){
+      if (this.role !== 'host' || !sim || sim.over) return;
+      if (d.kind === 'send' && d.cmd) Sim.command(sim, d.cmd);
+      else if (d.kind === 'card') Sim.cardPlay(sim, d.slot, d.target === -1 ? undefined : d.target, 2);
+      return;
+    }
+    if (d.t === 'st'){
+      if (this.role === 'guest' && sim) applySnapshot(d);
+    }
+  },
+};
+/* 客机：把主机快照写入本地镜像（地图由同种子生成，城池 id/坐标一致） */
+function applySnapshot(d){
+  var i, c;
+  sim.t = d.tm; sim.over = d.ov; sim.effects.rushT = d.rt || 0;
+  for (i = 0; i < d.cs.length && i < sim.castles.length; i++){
+    c = sim.castles[i];
+    c.owner = d.cs[i][0]; c.level = d.cs[i][1]; c.garrison = d.cs[i][2];
+    c.shieldT = d.cs[i][3] ? 1 : 0; c.weakT = d.cs[i][4] ? 1 : 0; c.flashT = d.cs[i][5] ? 0.3 : 0;
+  }
+  sim.armies = d.ar.map(function(r){
+    return { id: r[0], owner: r[1], count: r[2], x: r[3], y: r[4], tx: r[5], ty: r[6], tKind: r[7] ? 'c' : 'pt', tid: r[8], srcId: r[9], hx: r[3], hy: r[4] };
+  });
+  sim.camps = d.cp.map(function(r){
+    return { id: r[0], owner: r[1], count: r[2], x: r[3], y: r[4], decayAcc: 0 };
+  });
+  sim.ink[1] = d.ink[1]; sim.ink[2] = d.ink[2];
+  sim.hands[1] = d.hd[1]; sim.hands[2] = d.hd[2];
+  sim.hand = sim.hands[1];
+  sim.stats.capturedBy[1] = d.cap[0]; sim.stats.capturedBy[2] = d.cap[1]; sim.stats.cardsUsed = d.cap[2];
+  pruneSelection();
+  if (d.ev && d.ev.length) handleEvents(d.ev);
+  if (d.ov && mode === 'playing') endGame();
+}
+
 /* ===== 调试钩子（仅 ?debug 生效）：供自动化测试泵动模拟与读取状态 ===== */
 if (location.search.indexOf('debug') >= 0){
   window.__ink = {
     mode: function(){ return mode; },
     sim: function(){ return mode === 'menu' ? menuSim : sim; },
+    side: function(){ return mySide; },
+    net: function(){ return netRole; },
     step: function(secs){
       if (mode !== 'playing') return 0;
       var n = Math.round(secs * 30), i;

@@ -64,9 +64,9 @@ section('地图生成约束');
       minD = Math.min(minD, Math.hypot(a.x - b.x, a.y - b.y));
     }
   ok(minD >= Sim.CFG.MIN_DIST - 1e-6, '城池最小间距 ≥ ' + Sim.CFG.MIN_DIST, '实际 ' + minD.toFixed(1));
-  ok(sim.hand.length === 3 && sim.hand.every(k => Sim.CARDS.some(c => c.key === k)), '开局手牌 3 张且均属卡库');
+  ok(sim.hands[1].length === 3 && sim.hands[1].every(k => Sim.CARDS.some(c => c.key === k)), '开局手牌 3 张且均属卡库');
   const a2 = Sim.createGame({ opponents: 2, castles: 11, diff: 'normal', seed: 42 });
-  ok(JSON.stringify(a2.castles) === JSON.stringify(sim.castles) && JSON.stringify(a2.hand) === JSON.stringify(sim.hand),
+  ok(JSON.stringify(a2.castles) === JSON.stringify(sim.castles) && JSON.stringify(a2.hands[1]) === JSON.stringify(sim.hands[1]),
      '同种子确定性：两次建局地图/手牌完全一致');
   ok(sim.castles[0].x < Sim.CFG.MAP_W / 2 && sim.castles[0].y > Sim.CFG.MAP_H / 2, '玩家主城靠左下角出生');
 }
@@ -153,19 +153,19 @@ section('卡牌效果');
   const sim = unitSim(11);
   const foe = sim.castles.find(c => c.owner === 2);
   foe.garrison = 50;
-  sim.hand = ['fire', 'shield', 'rush']; sim.ink[1] = 10;
+  sim.hands[1] = ['fire', 'shield', 'rush']; sim.ink[1] = 10;
   ok(Sim.canPlay(sim, 0, 1).ok, 'canPlay：墨量充足可发动火攻');
   ok(Sim.cardPlay(sim, 0, foe.id), 'cardPlay（带目标）返回成功');
   ok(foe.garrison === 30, '火攻烧毁四成驻军 50→30', '实际 ' + foe.garrison);
-  ok(sim.ink[1] === 5 && sim.hand.length === 3, '扣墨 5 · 手牌补 1');
+  ok(sim.ink[1] === 5 && sim.hands[1].length === 3, '扣墨 5 · 手牌补 1');
   ok(!Sim.validTarget(sim, 'fire', 1, sim.castles[0].id), '火攻不可指定己方城');
-  sim.hand = ['weak', 'shield', 'rush'];
+  sim.hands[1] = ['weak', 'shield', 'rush'];
   ok(Sim.validTarget(sim, 'weak', 1, foe.id), '虚弱可选敌方城');
   ok(!Sim.validTarget(sim, 'weak', 1, sim.castles.find(c => c.owner === 0).id), '虚弱不可选中立城');
   const sim2 = unitSim(12);
   const me2 = sim2.castles[0];
   me2.garrison = 20;
-  sim2.hand = ['shield', 'fire', 'rush']; sim2.ink[1] = 10;
+  sim2.hands[1] = ['shield', 'fire', 'rush']; sim2.ink[1] = 10;
   Sim.cardPlay(sim2, 0, 0);
   ok(me2.shieldT === Sim.CFG.SHIELD_T, '护盾挂载 8 秒');
   sim2.armies.push({ id: 999, owner: 2, count: 50, x: me2.x + 30, y: me2.y, tx: me2.x, ty: me2.y, tKind: 'c', tid: 0, srcId: 1, hx: me2.x + 30, hy: me2.y });
@@ -176,13 +176,13 @@ section('卡牌效果');
 {
   const sim = unitSim(13);
   const me = sim.castles[0]; me.garrison = 10; me.level = 1;
-  sim.hand = ['reinforce', 'fire', 'rush']; sim.ink[1] = 10;
+  sim.hands[1] = ['reinforce', 'fire', 'rush']; sim.ink[1] = 10;
   Sim.cardPlay(sim, 0, 0);
   ok(me.garrison === 35 && me.level === 1, '增援 +25 且不触发升级判定', '实际 ' + me.garrison + ' Lv' + me.level);
   const sim2 = unitSim(14);
   const f2 = sim2.castles.find(c => c.owner === 2);
   f2.garrison = 0; f2.level = 1;
-  sim2.hand = ['weak', 'fire', 'rush']; sim2.ink[1] = 10;
+  sim2.hands[1] = ['weak', 'fire', 'rush']; sim2.ink[1] = 10;
   Sim.cardPlay(sim2, 0, f2.id);
   run(sim2, 4);
   const weakGain = f2.garrison;
@@ -195,7 +195,7 @@ section('卡牌效果');
   const me4 = sim4.castles[0];
   const t4 = addCastle(sim4, 0, me4.x + 240, me4.y, 1, 40);
   me4.garrison = 50;
-  sim4.hand = ['rush', 'fire', 'shield']; sim4.ink[1] = 10;
+  sim4.hands[1] = ['rush', 'fire', 'shield']; sim4.ink[1] = 10;
   Sim.cardPlay(sim4, 0);
   Sim.command(sim4, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'c', id: t4.id }, ratio: 1 });
   let arriveT = -1;
@@ -204,14 +204,14 @@ section('卡牌效果');
 }
 {
   const sim = unitSim(16);
-  sim.hand = ['dagger', 'fire', 'rush']; sim.ink[1] = 10;
+  sim.hands[1] = ['dagger', 'fire', 'rush']; sim.ink[1] = 10;
   ok(Sim.cardPlay(sim, 0), '借刀发动成功');
   ok(sim.castles.filter(c => c.owner === 1).length === 2, '最近中立城倒戈为己方（城池数 1→2）');
   const sim2 = unitSim(17);
   const me2 = sim2.castles[0], foe2 = sim2.castles.find(c => c.owner === 2);
   foe2.x = me2.x + 400; foe2.y = me2.y; foe2.garrison = 30; foe2.level = 3;   // Lv3 无升级消耗，隔离升级干扰
   sim2.armies.push({ id: 1, owner: 2, count: 30, x: me2.x + 200, y: me2.y, tx: me2.x, ty: me2.y, tKind: 'c', tid: 0, srcId: foe2.id, hx: foe2.x, hy: foe2.y });
-  sim2.hand = ['divert', 'fire', 'rush']; sim2.ink[1] = 10;
+  sim2.hands[1] = ['divert', 'fire', 'rush']; sim2.ink[1] = 10;
   Sim.cardPlay(sim2, 0);
   const a = sim2.armies[0];
   ok(a.tid === foe2.id && a.tx === foe2.x, '围魏救赵：敌军目标改回出发城');
@@ -220,11 +220,11 @@ section('卡牌效果');
      '驻军 ' + foe2.garrison.toFixed(0) + ' Lv' + foe2.level);
   const sim3 = unitSim(18);
   const me3 = sim3.castles[0]; me3.garrison = 5;
-  sim3.hand = ['surge', 'fire', 'rush']; sim3.ink[1] = 10;
+  sim3.hands[1] = ['surge', 'fire', 'rush']; sim3.ink[1] = 10;
   Sim.cardPlay(sim3, 0);
   ok(me3.garrison === 13, '墨涌：己方城 +8 兵', '实际 ' + me3.garrison);
   const sim4 = unitSim(19);
-  sim4.hand = ['dagger', 'fire', 'rush']; sim4.ink[1] = 2;
+  sim4.hands[1] = ['dagger', 'fire', 'rush']; sim4.ink[1] = 2;
   ok(!Sim.canPlay(sim4, 0, 1).ok && Sim.canPlay(sim4, 0, 1).reason === '墨量不足', '墨量不足 → canPlay 拒绝并给出原因');
   ok(!Sim.cardPlay(sim4, 0), '墨量不足 → cardPlay 失败不生效');
 }
@@ -311,6 +311,28 @@ section('AI 强度分层（互打采样）');
   ok(rate >= 0.6, '困难 AI 胜率 ≥ 60%（实测 ' + (rate * 100).toFixed(0) + '%，耗时 ' + secs + 's）', '胜 ' + hardWin + '/' + decided);
   ok(clashTotal > 0, '采样对局累计发生在途遭遇战 ' + clashTotal + ' 次');
   ok(avgLen >= 60, '对局平均时长 ≥ 60s（实测均值 ' + avgLen + 's）', '过快结束会影响 3-5 分钟节奏');
+}
+
+/* ============================================================
+ * 8. 双玩家（联机基础）：独立手牌 / 视角化胜负语义
+ * ============================================================ */
+section('双玩家支持');
+{
+  const sim = Sim.createGame({ opponents: 1, castles: 8, diff: 'easy', seed: 77, noAI: true });
+  ok(sim.hands[1].length === 3 && sim.hands[2].length === 3, '双方各发 3 张手牌');
+  ok(sim.hands[1] !== sim.hands[2], '双手牌数组相互独立');
+  // 2 号玩家打火攻：扣 ink[2]、补牌到 hands[2]，不影响 1 号
+  const neutralT = sim.castles.find(c => c.owner === 0);
+  neutralT.garrison = 50;
+  sim.hands[2] = ['fire', 'shield', 'rush']; sim.ink[2] = 10;
+  const h1 = sim.hands[1].slice();
+  ok(Sim.cardPlay(sim, 0, neutralT.id, 2), '2 号玩家 cardPlay 成功');
+  ok(neutralT.garrison === 30 && sim.ink[2] === 5 && sim.hands[2].length === 3, '2 号效果与资源结算正确');
+  ok(JSON.stringify(sim.hands[1]) === JSON.stringify(h1), '1 号手牌不受影响');
+  // PvP 胜负语义：1 号城池尽失 → over=2（2 号胜）
+  sim.castles.forEach(c => { if (c.owner === 1) c.owner = 2; });
+  Sim.step(sim, DT);
+  ok(sim.over === 2, 'PvP 语义：1 号灭 → over=2（2 号胜）', 'over=' + sim.over);
 }
 
 /* ---------- 汇总 ---------- */

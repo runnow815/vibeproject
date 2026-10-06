@@ -132,6 +132,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 8 张战术卡：火攻/护盾/增援/虚弱/疾行/借刀/围魏救赵/墨涌，墨量驱动，3 卡槽循环摸牌
 - AI 三档难度（扩张/回防/升级/集结/进攻/保底强攻六段决策，失误只改目标不改打法），与玩家共用同一命令接口
 - 快速对战（对手 1-3 / 地图 8-14 城 / 三档难度）+ 闯关 10 关递进解锁
+- 好友对战（联机 1v1）：WebRTC P2P + 邀请/应答链接信令 + 主机权威快照同步（100ms），客机镜像渲染 + 航位推算；UI 以 mySide 视角化
 - 双 script 块：纯逻辑层 `InkSim`（固定 1/30s 步长 + 命令驱动，可 Node 无头验证）+ IIFE UI 层
 - `node tools/verify-sim.js`：56 项断言（地图/占领/升级/8 卡/阵列/遭遇战/不变量/AI 分层采样）
 - WebAudio 合成音效，进度/最快胜利/音效/配置持久化（localStorage 前缀 `ink.`）
