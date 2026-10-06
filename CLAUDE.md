@@ -33,6 +33,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ├── project7/          ← 飞机大战 · Sky Raid
 │   ├── plane.html     ← 纵版飞行射击（Canvas，单文件）
 │   └── README.md      ← 项目说明
+├── project8/          ← 墨战 · 水墨城池攻防
+│   ├── inkwar.html    ← State.io 类 RTS（Canvas，单文件）
+│   ├── docs/          ← 需求文档 / 架构设计 / 可视化原型页
+│   ├── tools/
+│   │   └── verify-sim.js ← 模拟核心无头验证器（Node）
+│   └── README.md      ← 项目说明
 ├── CLAUDE.md          ← 本文件
 └── .gitignore
 ```
@@ -117,6 +123,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - WebAudio 合成音效，最高分持久化
 - 鼠标/触摸/键盘三操控，Canvas 渲染
 
+### project8 — 墨战 · 水墨城池攻防
+
+水墨风 State.io 类 RTS 策略游戏（先文档后代码：docs/ 内含需求文档、架构设计、可视化原型页）：
+- 核心循环：城池自动产兵（3 级，增援自动升级）→ 框选/点选派遣 → 占领扩张 → 全占敌城获胜
+- 水墨特色：宣纸底 + 四阵营墨色、楷体、印章 UI、占领晕染；墨色相溶——异主部队在途相遇互相湮灭
+- 屯兵列阵：点空地驻军待命，可再次框选派遣，阵列每 5 秒散逸 1 兵
+- 8 张战术卡：火攻/护盾/增援/虚弱/疾行/借刀/围魏救赵/墨涌，墨量驱动，3 卡槽循环摸牌
+- AI 三档难度（扩张/回防/升级/集结/进攻/保底强攻六段决策，失误只改目标不改打法），与玩家共用同一命令接口
+- 快速对战（对手 1-3 / 地图 8-14 城 / 三档难度）+ 闯关 10 关递进解锁
+- 双 script 块：纯逻辑层 `InkSim`（固定 1/30s 步长 + 命令驱动，可 Node 无头验证）+ IIFE UI 层
+- `node tools/verify-sim.js`：56 项断言（地图/占领/升级/8 卡/阵列/遭遇战/不变量/AI 分层采样）
+- WebAudio 合成音效，进度/最快胜利/音效/配置持久化（localStorage 前缀 `ink.`）
+
 ## 常用命令
 
 ```bash
@@ -134,6 +153,10 @@ start project5/sudoku.html
 start project6/snake.html
 # 打开飞机大战
 start project7/plane.html
+# 打开墨战
+start project8/inkwar.html
+# 运行墨战模拟核心验证
+node project8/tools/verify-sim.js
 ```
 
 ## 通用代码模式

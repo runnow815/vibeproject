@@ -1,0 +1,1487 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>墨战 · 水墨城池攻防</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🖌️</text></svg>">
+<style>
+:root{
+  --paper:#f2ecdb; --paper2:#f5f0e0; --ink:#2b2a26; --ink2:#57534a;
+  --cinnabar:#b33327; --cinnabar2:#8e2a1d; --gold:#c9962e;
+  --dai:#2c5f6e; --zhe:#a86b3c; --lv:#4a6b52;
+  --stage-reserve:176px;
+}
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{height:100%}
+body{
+  background:var(--paper); color:var(--ink); overflow:hidden;
+  font-family:"STKaiti","KaiTi","楷体","Noto Serif SC",serif;
+  display:flex; flex-direction:column; align-items:center; justify-content:center;
+  gap:8px; padding:8px;
+  background-image:radial-gradient(ellipse at 15% 8%,rgba(43,42,38,.05),transparent 55%),
+                   radial-gradient(ellipse at 88% 92%,rgba(179,51,39,.04),transparent 50%);
+}
+button{font-family:inherit;cursor:pointer}
+/* ===== 顶栏 ===== */
+.topbar{
+  width:min(1080px,96vw); display:flex; align-items:center; gap:14px;
+  padding:4px 6px; user-select:none;
+}
+.brand{
+  width:44px;height:44px;flex:none;border:2.5px solid var(--cinnabar);color:var(--cinnabar);
+  display:flex;align-items:center;justify-content:center;font-size:17px;font-weight:700;
+  letter-spacing:1px;line-height:1.05;border-radius:5px;transform:rotate(-5deg);
+  box-shadow:1px 2px 0 rgba(43,42,38,.15);
+}
+.hud{display:flex;align-items:center;gap:12px;flex:1;min-width:0;font-size:16px;letter-spacing:1px}
+.hud .item{display:flex;align-items:center;gap:5px;white-space:nowrap}
+.hud .lab{font-style:normal;color:var(--ink2)}
+.hud .narrow{display:none}
+.inkwrap{width:110px;height:12px;border:1.5px solid var(--ink2);background:#e6dfca;position:relative;border-radius:2px}
+.inkfill{position:absolute;inset:1px;width:30%;background:linear-gradient(90deg,#4a4640,var(--cinnabar));border-radius:1px;transition:width .25s}
+.inkwrap.flash{animation:inkflash .4s}
+@keyframes inkflash{0%,100%{border-color:var(--ink2)}50%{border-color:#e03e2e;box-shadow:0 0 0 3px rgba(224,62,46,.25)}}
+.tbtn{
+  border:1.5px solid var(--ink2);background:transparent;color:var(--ink2);
+  padding:6px 13px;font-size:15px;letter-spacing:2px;border-radius:4px;
+}
+.tbtn:hover{border-color:var(--cinnabar);color:var(--cinnabar)}
+/* ===== 舞台（三重约束响应式） ===== */
+.stage{
+  position:relative; container-type:inline-size;
+  width:min(1080px, 96vw, calc((100vh - var(--stage-reserve)) * 1.7778));
+}
+@supports (height:100dvh){
+  .stage{width:min(1080px, 96vw, calc((100dvh - var(--stage-reserve)) * 1.7778))}
+}
+#board{
+  display:block;width:100%;aspect-ratio:16/9;border:2px solid var(--ink);
+  background:var(--paper2);touch-action:none;box-shadow:4px 5px 0 rgba(43,42,38,.14);
+  border-radius:3px;cursor:crosshair;
+}
+/* ===== 底部操作区 ===== */
+.cardbar{width:min(1080px,96vw);display:flex;gap:12px;align-items:stretch}
+.ratio{display:flex;flex-direction:column;border:1.5px solid var(--ink2);border-radius:4px;overflow:hidden;background:#efe8d3}
+.ratio b{flex:1;display:flex;align-items:center;justify-content:center;padding:0 12px;min-width:52px;
+  font-size:14px;color:var(--ink2);letter-spacing:1px;transition:.12s}
+.ratio b.on{background:var(--ink);color:var(--paper2)}
+.cards{display:flex;gap:10px;flex:1;justify-content:center}
+.card{
+  width:96px;border:1.5px solid var(--ink);background:#f9f4e6;border-radius:4px;position:relative;
+  padding:6px 4px 5px;text-align:center;box-shadow:2px 3px 0 rgba(43,42,38,.16);
+  transition:transform .12s;color:var(--ink);min-height:64px;
+}
+.card:hover{transform:translateY(-2px)}
+.card .cn{font-size:18px;letter-spacing:3px;font-weight:700;line-height:1.15}
+.card .cd{font-size:11px;color:var(--ink2);margin-top:2px;line-height:1.3;height:29px;display:flex;align-items:center;justify-content:center}
+.card .cc{font-size:12px;color:var(--paper2);background:var(--ink);display:inline-block;padding:0 8px;border-radius:2px;letter-spacing:1px}
+.card.dim{opacity:.45}
+.card.aim{outline:2.5px solid var(--cinnabar);outline-offset:2px;transform:translateY(-3px)}
+.card.shake{animation:shake .4s}
+@keyframes shake{0%,100%{transform:translateX(0)}20%{transform:translateX(-5px)}40%{transform:translateX(5px)}60%{transform:translateX(-4px)}80%{transform:translateX(4px)}}
+.hint{align-self:center;color:var(--ink2);font-size:13.5px;letter-spacing:1px;max-width:170px;text-align:center;line-height:1.6}
+/* ===== 遮罩层（菜单/暂停/结算 复用） ===== */
+.overlay{
+  position:absolute;inset:0;background:rgba(36,32,26,.52);backdrop-filter:blur(2px);
+  display:flex;align-items:center;justify-content:center;z-index:10;border-radius:3px;
+}
+.overlay.hide{display:none}
+.panel{
+  width:min(560px,94%);max-height:96%;overflow-y:auto;background:#f7f2e3;border:2px solid var(--ink);
+  box-shadow:6px 7px 0 rgba(20,18,14,.35);padding:20px 22px 16px;text-align:center;border-radius:4px;
+}
+.panel h1{font-size:34px;letter-spacing:16px;text-indent:16px;font-weight:700;line-height:1.2}
+.panel h1 i{color:var(--cinnabar);font-style:normal}
+.panel .motto{color:var(--ink2);font-size:13px;letter-spacing:4px;margin:4px 0 14px}
+.pbox{border:1.5px solid var(--ink2);border-radius:4px;padding:12px 14px;margin-bottom:12px;text-align:left;background:#fbf6e9}
+.ptitle{font-size:17px;letter-spacing:4px;margin-bottom:9px;display:flex;align-items:baseline;gap:8px}
+.ptitle small{font-size:12px;color:var(--ink2);letter-spacing:1px}
+.optrow{display:flex;align-items:center;gap:7px;margin:7px 0;flex-wrap:wrap}
+.optrow .lab{font-size:13.5px;color:var(--ink2);width:44px;letter-spacing:2px;flex:none}
+.opt{font-size:13.5px;border:1px solid var(--ink2);padding:4px 11px;border-radius:3px;color:var(--ink2);background:transparent;letter-spacing:1px}
+.opt.sel{background:var(--ink);color:var(--paper2);border-color:var(--ink)}
+.bigbtn{
+  display:block;width:100%;padding:10px 0;font-size:20px;letter-spacing:14px;text-indent:14px;
+  background:var(--cinnabar);color:#fbf6e9;border:none;border-radius:4px;
+  box-shadow:2px 3px 0 rgba(43,42,38,.3);margin:2px 0 4px;
+}
+.bigbtn:active{transform:translateY(1px)}
+.lvlgrid{display:flex;gap:7px;flex-wrap:wrap;justify-content:center}
+.lvl{width:40px;height:40px;border:1.5px solid var(--ink2);border-radius:3px;display:flex;flex-direction:column;
+  align-items:center;justify-content:center;font-size:15px;color:var(--ink2);background:transparent;line-height:1}
+.lvl small{font-size:9px;letter-spacing:0;margin-top:1px}
+.lvl.done{background:var(--lv);color:#fff;border-color:var(--lv)}
+.lvl.now{border-color:var(--cinnabar);color:var(--cinnabar);box-shadow:0 0 0 2px rgba(179,51,39,.22)}
+.lvl:disabled{opacity:.32;cursor:not-allowed}
+.mfoot{display:flex;justify-content:space-between;align-items:center;color:var(--ink2);font-size:13px;margin-top:4px;padding:0 2px}
+/* 结算印章 */
+.stamp{width:112px;height:112px;margin:4px auto 10px;border:5px solid;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;transform:rotate(-8deg);
+  font-size:36px;letter-spacing:8px;text-indent:8px;font-weight:700;line-height:1.1}
+.stamp small{font-size:11px;letter-spacing:2px;margin-top:4px;text-indent:0}
+.stamp.win{color:var(--cinnabar);border-color:var(--cinnabar)}
+.stamp.lose{color:#3a3a3a;border-color:#3a3a3a}
+.rstat{color:var(--ink2);font-size:14.5px;line-height:1.9;margin:6px 0 14px;letter-spacing:1px}
+.btnrow{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
+.bb{padding:9px 24px;font-size:16px;letter-spacing:3px;border-radius:4px;border:1.5px solid var(--ink);background:transparent;color:var(--ink)}
+.bb.pri{background:var(--cinnabar);color:#fbf6e9;border-color:var(--cinnabar)}
+/* ===== 响应式断点 ===== */
+@media (max-width:700px){ /* 手机竖屏 */
+  :root{--stage-reserve:196px}
+  .brand{width:38px;height:38px;font-size:15px}
+  .hud{gap:7px;font-size:13px}
+  .inkwrap{width:72px}
+  .tbtn{padding:5px 9px;font-size:13px;letter-spacing:1px}
+  .card{width:31%;min-width:88px;min-height:66px}
+  .card .cn{font-size:19px}
+  .card .cd{display:none}
+  .ratio b{min-width:46px;font-size:14px}
+  .hint{display:none}
+  .panel{padding:14px 12px 12px}
+  .panel h1{font-size:26px;letter-spacing:10px;text-indent:10px}
+  .opt{padding:6px 12px}
+  .lvl{width:36px;height:36px}
+}
+@media (max-width:430px){ /* 窄屏：顶栏极简模式 */
+  .hud{gap:6px;font-size:12px}
+  .hud .lab{display:none}
+  .hud .wide{display:none}
+  .hud .narrow{display:inline}
+  .inkwrap{width:56px}
+  .brand{width:32px;height:32px;font-size:13px}
+  :root{--stage-reserve:180px}
+}
+@media (min-width:701px) and (max-height:620px){ /* 桌面矮窗口 */
+  :root{--stage-reserve:150px}
+  .brand{width:34px;height:34px;font-size:13px}
+  .card{min-height:56px;padding:4px 3px}
+  .card .cd{height:22px}
+  .panel{padding:12px 16px 10px}
+  .panel h1{font-size:24px}
+}
+@media (max-width:950px) and (orientation:landscape){ /* 手机横屏 */
+  :root{--stage-reserve:132px}
+  .brand,.hint{display:none}
+  .hud{font-size:13px}
+  .card{min-height:52px;padding:3px 3px}
+  .card .cd{display:none}
+  .card .cn{font-size:16px}
+}
+@media (pointer:coarse){
+  .tbtn,.opt,.ratio b,.card{min-height:44px}
+}
+</style>
+</head>
+<body>
+
+<header class="topbar">
+  <div class="brand">墨战</div>
+  <div class="hud">
+    <span class="item"><i class="lab">墨量</i><span class="inkwrap" id="inkwrap"><span class="inkfill" id="inkfill"></span></span><b id="inkval">3.0</b></span>
+    <span class="item"><i class="lab">⏱</i><b id="timeval">0:00</b></span>
+    <span class="item"><i class="lab">我城</i><b id="myval">1</b></span>
+    <span class="item"><i class="lab">敌城</i><b id="foeval">1</b></span>
+    <span style="flex:1"></span>
+    <button class="tbtn" id="btnPause"><span class="wide">‖ 暂停</span><span class="narrow">‖</span></button>
+  </div>
+</header>
+
+<div class="stage" id="stage">
+  <canvas id="board"></canvas>
+  <div class="overlay" id="overlay"><div class="panel" id="panel"></div></div>
+</div>
+
+<div class="cardbar">
+  <div class="ratio" id="ratio">
+    <b data-r="0.5">50%</b><b data-r="1" class="on">100%</b>
+  </div>
+  <div class="cards" id="cards"></div>
+  <div class="hint" id="hint">拖框多选己方城池<br>点击目标即派遣<br>点空地可列阵屯兵</div>
+</div>
+
+<script>
+/* ============================================================
+ * 块1 · 纯逻辑层 InkSim —— 不触碰 DOM / Audio，Node 可无头运行
+ * 数值与 docs/需求文档.md 2.4 表同步维护
+ * ============================================================ */
+(function(){
+'use strict';
+
+var CFG = {
+  MAP_W: 1600, MAP_H: 900,
+  SPEED: 120,            // 行军速度 虚拟像素/秒
+  MIN_DIST: 240,         // 城池最小间距
+  CLASH_R: 16,           // 在途遭遇半径：异主部队相遇互相湮灭（墨色相溶）
+  INK_MAX: 10, INK_START: 3, INK_REGEN: 0.25,
+  CAPTURE_INK: { enemy: 2, neutral: 1 },
+  CAMP_DECAY: 5,         // 阵列每 5 秒散逸 1 兵
+  SHIELD_T: 8, WEAK_T: 10, RUSH_T: 10,
+  ARMY_CAP: 300,         // 部队实体上限（非功能需求 N4）
+  REINFORCE_N: 25, SURGE_N: 8, FIRE_KILL: 0.4,
+};
+
+var LEVELS = [
+  { rate: 0.7,  cap: 35,  up: 20 },
+  { rate: 1.2,  cap: 70,  up: 50 },
+  { rate: 1.8,  cap: 110, up: null },
+];
+
+/* ratio = 扩张/输血比例；atkRatio = 进攻比例；buffer = 进攻需超过守方驻军的倍率 */
+var DIFF = {
+  easy:   { interval: 2.2, mistake: 0.40, ratio: 0.5, atkRatio: 1.0, buffer: 0.85, minPool: 12, card: false },
+  normal: { interval: 1.4, mistake: 0.15, ratio: 0.6, atkRatio: 0.9, buffer: 0.95, minPool: 10, card: false },
+  hard:   { interval: 0.8, mistake: 0.05, ratio: 0.7, atkRatio: 0.9, buffer: 1.0,  minPool: 8,  card: true  },
+};
+
+/* target: 'foe'=敌/中立 'enemy'=仅敌方 'own'=己方 null=无需目标 */
+var CARDS = [
+  { key: 'fire',      name: '火攻',     desc: '烧毁敌城四成驻军',   cost: 5, target: 'foe' },
+  { key: 'shield',    name: '护盾',     desc: '8 秒免疫来犯',       cost: 4, target: 'own' },
+  { key: 'reinforce', name: '增援',     desc: '目标己城 +25 兵',    cost: 4, target: 'own' },
+  { key: 'weak',      name: '虚弱',     desc: '敌城产速减半 10 秒', cost: 4, target: 'enemy' },
+  { key: 'rush',      name: '疾行',     desc: '己方行军 ×2 · 10秒', cost: 3, target: null },
+  { key: 'dagger',    name: '借刀',     desc: '最近中立城倒戈',     cost: 6, target: null },
+  { key: 'divert',    name: '围魏救赵', desc: '召回敌方在途部队',   cost: 5, target: null },
+  { key: 'surge',     name: '墨涌',     desc: '己方全城 +8 兵',     cost: 6, target: null },
+];
+var CARD_BY_KEY = {};
+CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
+
+var CAMPAIGN = [
+  { name: '初出茅庐', castles: 8,  opponents: 1, diff: 'easy',   bonus: 0  },
+  { name: '小试锋芒', castles: 9,  opponents: 1, diff: 'easy',   bonus: 0  },
+  { name: '牛刀小试', castles: 9,  opponents: 2, diff: 'easy',   bonus: 0  },
+  { name: '烽烟四起', castles: 10, opponents: 2, diff: 'normal', bonus: 0  },
+  { name: '兵临城下', castles: 10, opponents: 2, diff: 'normal', bonus: 10 },
+  { name: '合纵连横', castles: 11, opponents: 2, diff: 'normal', bonus: 10 },
+  { name: '三面临敌', castles: 12, opponents: 3, diff: 'hard',   bonus: 10 },
+  { name: '铁壁铜墙', castles: 12, opponents: 3, diff: 'hard',   bonus: 10 },
+  { name: '十面埋伏', castles: 13, opponents: 3, diff: 'hard',   bonus: 15 },
+  { name: '问鼎天下', castles: 14, opponents: 3, diff: 'hard',   bonus: 20 },
+];
+
+function mulberry32(seed){
+  var a = seed >>> 0;
+  return function(){
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function dist(ax, ay, bx, by){ var dx = ax-bx, dy = ay-by; return Math.sqrt(dx*dx + dy*dy); }
+
+/* ---------- 地图生成：最小间距拒绝采样 + 主城方位 + AI 贪心远点 ---------- */
+function mapGen(sim, opts){
+  var N = opts.castles || 11, rng = sim.rng;
+  var pts = [], minD = CFG.MIN_DIST, guard = 0;
+  while (pts.length < N && guard < 8000){
+    guard++;
+    if (guard > 4000) minD = Math.max(150, minD - 1);
+    var x = 90 + rng() * (CFG.MAP_W - 180), y = 90 + rng() * (CFG.MAP_H - 180);
+    var ok = true;
+    for (var i = 0; i < pts.length; i++){
+      var dx = pts[i].x - x, dy = pts[i].y - y;
+      if (dx*dx + dy*dy < minD*minD){ ok = false; break; }
+    }
+    if (ok) pts.push({ x: x, y: y });
+  }
+  var pi = 0, best = Infinity;                    // 玩家主城：最靠左下角
+  for (i = 0; i < pts.length; i++){
+    var d = dist(pts[i].x, pts[i].y, 190, 780);
+    if (d < best){ best = d; pi = i; }
+  }
+  var home = pts.splice(pi, 1)[0];
+  var chosen = [home], aiPts = [];                 // AI 主城：贪心取离已选点最远者
+  for (var k = 0; k < (opts.opponents || 1); k++){
+    var bi = 0, bd = -1;
+    for (i = 0; i < pts.length; i++){
+      var md = Infinity;
+      for (var j = 0; j < chosen.length; j++) md = Math.min(md, dist(pts[i].x, pts[i].y, chosen[j].x, chosen[j].y));
+      if (md > bd){ bd = md; bi = i; }
+    }
+    aiPts.push(pts.splice(bi, 1)[0]);
+    chosen.push(aiPts[aiPts.length-1]);
+  }
+  var aid = 0;
+  sim.castles.push({ id: aid++, owner: 1, x: home.x, y: home.y, level: 1, garrison: 20, shieldT: 0, weakT: 0, flashT: 0 });
+  for (k = 0; k < aiPts.length; k++)
+    sim.castles.push({ id: aid++, owner: 2 + k, x: aiPts[k].x, y: aiPts[k].y, level: 1, garrison: 20 + (opts.bonus || 0), shieldT: 0, weakT: 0, flashT: 0 });
+  for (i = 0; i < pts.length; i++)
+    sim.castles.push({ id: aid++, owner: 0, x: pts[i].x, y: pts[i].y, level: 1, garrison: 10 + Math.floor(rng() * 16), shieldT: 0, weakT: 0, flashT: 0 });
+}
+
+function drawCard(sim){ return CARDS[Math.floor(sim.rng() * CARDS.length)].key; }
+
+/* ---------- 建局 ---------- */
+function createGame(opts){
+  opts = opts || {};
+  var seed = opts.seed != null ? opts.seed : (Date.now() % 2147483647);
+  var sim = {
+    t: 0, over: 0,
+    castles: [], armies: [], camps: [],
+    ink: [0, CFG.INK_START, CFG.INK_START, CFG.INK_START, CFG.INK_START],
+    hand: [], cmdQueue: [], events: [],
+    effects: { rushT: 0 },
+    stats: { capturedBy: { 1: 0, 2: 0, 3: 0, 4: 0 }, cardsUsed: 0 },
+    aiAcc: { 1: 0, 2: 0, 3: 0, 4: 0 }, aiCardCd: { 1: 0, 2: 0, 3: 0, 4: 0 },
+    aiIdle: { 1: 0, 2: 0, 3: 0, 4: 0 },
+    aiDiff: null,                  // 测试钩子：按阵营覆写难度
+    opts: opts, rngSeed: seed, rng: mulberry32(seed),
+    _aid: 1,
+  };
+  mapGen(sim, opts);
+  for (var i = 0; i < 3; i++) sim.hand.push(drawCard(sim));
+  return sim;
+}
+
+/* ---------- 命令接口（玩家与 AI 共用；步首统一执行） ---------- */
+function command(sim, cmd){ if (!sim.over) sim.cmdQueue.push(cmd); }
+
+function srcRef(sim, ref){                       // ref: {k:'c'|'p', id}
+  if (ref.k === 'c'){ var c = sim.castles[ref.id]; return c ? { count: c.garrison, x: c.x, y: c.y, srcId: c.id } : null; }
+  var p = sim.camps[ref.id]; return p ? { count: p.count, x: p.x, y: p.y, srcId: -1 } : null;
+}
+function srcOwner(sim, ref){
+  if (ref.k === 'c'){ var c = sim.castles[ref.id]; return c ? c.owner : -1; }
+  var p = sim.camps[ref.id]; return p ? p.owner : -1;
+}
+function launchArmy(sim, owner, sx, sy, target, count, srcId){
+  sim.armies.push({
+    id: sim._aid++, owner: owner, count: count,
+    x: sx, y: sy,
+    tx: target.x, ty: target.y, tKind: target.k, tid: target.id != null ? target.id : -1,
+    srcId: srcId, hx: sx, hy: sy,
+  });
+}
+function doSend(sim, cmd){
+  if (sim.over) return;
+  if (sim.armies.length >= CFG.ARMY_CAP){ sim.events.push({ type: 'hint', txt: '墨潮汹涌 · 部队已达上限' }); return; }
+  var target = cmd.to.k === 'c' ? (function(){ var c = sim.castles[cmd.to.id]; return c ? { k: 'c', id: c.id, x: c.x, y: c.y } : null; })() : { k: 'pt', id: -1, x: cmd.to.x, y: cmd.to.y };
+  if (!target) return;
+  var launched = 0;
+  for (var i = 0; i < cmd.from.length; i++){
+    var ref = cmd.from[i];
+    if (srcOwner(sim, ref) !== cmd.owner) continue;
+    var s = srcRef(sim, ref); if (!s) continue;
+    var n = Math.floor(s.count * cmd.ratio);
+    if (n < 1) continue;
+    if (ref.k === 'c') sim.castles[ref.id].garrison -= n;
+    else sim.camps[ref.id].count -= n;
+    launchArmy(sim, cmd.owner, s.x, s.y, target, n, s.srcId);
+    launched++;
+  }
+  if (launched) sim.events.push({ type: 'send' });
+}
+
+/* ---------- 抵达结算 ---------- */
+function findCamp(sim, owner, x, y, r){
+  for (var i = 0; i < sim.camps.length; i++){
+    var p = sim.camps[i];
+    if (p.owner === owner && dist(p.x, p.y, x, y) < r) return p;
+  }
+  return null;
+}
+function resolveArrival(sim, a){
+  if (a.tKind === 'pt'){
+    var cp = findCamp(sim, a.owner, a.tx, a.ty, 60);
+    if (cp) cp.count += a.count;
+    else sim.camps.push({ id: sim.camps.length, owner: a.owner, x: a.tx, y: a.ty, count: a.count, decayAcc: 0 });
+    return;
+  }
+  var c = sim.castles[a.tid]; if (!c) return;
+  if (c.owner === a.owner){
+    var L = LEVELS[c.level - 1];
+    c.garrison = Math.min(L.cap, c.garrison + a.count);
+    if (c.level < 3 && c.garrison >= LEVELS[c.level - 1].up){
+      c.garrison -= LEVELS[c.level - 1].up;
+      c.level++;
+      sim.events.push({ type: 'upgrade', x: c.x, y: c.y, level: c.level });
+    }
+  } else {
+    if (c.shieldT > 0){ sim.events.push({ type: 'block', x: c.x, y: c.y }); return; }
+    if (a.count > c.garrison){
+      var from = c.owner;
+      c.owner = a.owner;
+      c.garrison = Math.min(LEVELS[c.level - 1].cap, a.count - c.garrison);
+      c.flashT = 0.6;
+      sim.ink[a.owner] = Math.min(CFG.INK_MAX, sim.ink[a.owner] + (from === 0 ? CFG.CAPTURE_INK.neutral : CFG.CAPTURE_INK.enemy));
+      if (a.owner === 1) sim.stats.capturedBy[1]++;
+      sim.events.push({ type: 'capture', x: c.x, y: c.y, owner: a.owner });
+    } else {
+      c.garrison -= a.count;
+    }
+  }
+}
+
+/* ---------- 卡牌 ---------- */
+function validTarget(sim, key, owner, targetId){
+  var card = CARD_BY_KEY[key]; if (!card) return false;
+  var c = targetId != null ? sim.castles[targetId] : null;
+  switch (card.target){
+    case 'own':   return !!c && c.owner === owner;
+    case 'enemy': return !!c && c.owner !== 0 && c.owner !== owner;
+    case 'foe':   return !!c && c.owner !== owner;
+    default:      return true;
+  }
+}
+function applyCard(sim, key, owner, targetId){
+  var i, c;
+  switch (key){
+    case 'fire':
+      c = sim.castles[targetId];
+      if (c){ c.garrison = Math.floor(c.garrison * (1 - CFG.FIRE_KILL)); sim.events.push({ type: 'burn', x: c.x, y: c.y }); }
+      break;
+    case 'shield':
+      c = sim.castles[targetId]; if (c) c.shieldT = CFG.SHIELD_T;
+      break;
+    case 'reinforce':
+      c = sim.castles[targetId];
+      if (c) c.garrison = Math.min(LEVELS[c.level - 1].cap, c.garrison + CFG.REINFORCE_N);
+      break;
+    case 'weak':
+      c = sim.castles[targetId]; if (c) c.weakT = CFG.WEAK_T;
+      break;
+    case 'rush':
+      sim.effects.rushT = CFG.RUSH_T;
+      break;
+    case 'dagger':
+      var own = sim.castles.filter(function(x){ return x.owner === owner; });
+      var ref = own.length ? { x: own[0].x, y: own[0].y } : { x: CFG.MAP_W / 2, y: CFG.MAP_H / 2 };
+      var best = null, bd = Infinity;
+      for (i = 0; i < sim.castles.length; i++){
+        c = sim.castles[i];
+        if (c.owner !== 0) continue;
+        var d = dist(c.x, c.y, ref.x, ref.y);
+        if (d < bd){ bd = d; best = c; }
+      }
+      if (best){ best.owner = owner; best.flashT = 0.6; sim.events.push({ type: 'capture', x: best.x, y: best.y, owner: owner }); }
+      break;
+    case 'divert':
+      for (i = 0; i < sim.armies.length; i++){
+        var a = sim.armies[i];
+        if (a.owner === owner) continue;
+        var ret = null;
+        if (a.srcId >= 0 && sim.castles[a.srcId]) ret = sim.castles[a.srcId];
+        else {
+          var mine = sim.castles.filter(function(x){ return x.owner === a.owner; });
+          var bm = null, bmd = Infinity;
+          for (var j = 0; j < mine.length; j++){
+            var dd = dist(mine[j].x, mine[j].y, a.x, a.y);
+            if (dd < bmd){ bmd = dd; bm = mine[j]; }
+          }
+          ret = bm;
+        }
+        if (ret){ a.tx = ret.x; a.ty = ret.y; a.tKind = 'c'; a.tid = ret.id; }
+      }
+      break;
+    case 'surge':
+      for (i = 0; i < sim.castles.length; i++){
+        c = sim.castles[i];
+        if (c.owner === owner) c.garrison = Math.min(LEVELS[c.level - 1].cap, c.garrison + CFG.SURGE_N);
+      }
+      break;
+  }
+}
+function canPlay(sim, slot, owner){
+  owner = owner || 1;
+  var key = sim.hand[slot]; if (!key) return { ok: false, reason: '无此卡' };
+  var card = CARD_BY_KEY[key], i;
+  if (sim.ink[owner] < card.cost) return { ok: false, reason: '墨量不足' };
+  var hasOwn = false, hasFoe = false, hasEnemy = false, hasNeutral = false, hasEnemyArmy = false;
+  for (i = 0; i < sim.castles.length; i++){
+    var c = sim.castles[i];
+    if (c.owner === owner) hasOwn = true;
+    else if (c.owner === 0) hasNeutral = true;
+    else { hasEnemy = true; hasFoe = true; }
+  }
+  if (!hasFoe) { hasNeutral = sim.castles.some(function(x){ return x.owner === 0; }); hasFoe = hasEnemy || hasNeutral; }
+  for (i = 0; i < sim.armies.length; i++) if (sim.armies[i].owner !== owner){ hasEnemyArmy = true; break; }
+  switch (key){
+    case 'fire':      if (!hasFoe) return { ok: false, reason: '无可打击目标' }; break;
+    case 'weak':      if (!hasEnemy) return { ok: false, reason: '无敌方城池' }; break;
+    case 'shield':
+    case 'reinforce':
+    case 'surge':     if (!hasOwn) return { ok: false, reason: '无己方城池' }; break;
+    case 'dagger':    if (!hasNeutral) return { ok: false, reason: '无中立城池' }; break;
+    case 'divert':    if (!hasEnemyArmy) return { ok: false, reason: '无敌军在途' }; break;
+  }
+  return { ok: true, reason: '' };
+}
+function cardPlay(sim, slot, targetId){
+  if (sim.over) return false;
+  var key = sim.hand[slot]; if (!key) return false;
+  var card = CARD_BY_KEY[key];
+  if (sim.ink[1] < card.cost) return false;
+  if (!validTarget(sim, key, 1, targetId)) return false;
+  applyCard(sim, key, 1, targetId);
+  sim.ink[1] -= card.cost;
+  sim.stats.cardsUsed++;
+  sim.hand.splice(slot, 1);
+  sim.hand.push(drawCard(sim));
+  sim.events.push({ type: 'card', key: key, name: card.name });
+  return true;
+}
+
+/* ---------- AI（与玩家共用 command 接口，不作弊） ---------- */
+function castlesOf(sim, owner){
+  return sim.castles.filter(function(c){ return c.owner === owner; });
+}
+function diffOf(sim, owner){
+  return (sim.aiDiff && sim.aiDiff[owner]) || sim.opts.diff || 'normal';
+}
+function aiSend(sim, owner, sources, target, ratio){
+  command(sim, { owner: owner, from: sources.map(function(c){ return { k: 'c', id: c.id }; }),
+                 to: { k: 'c', id: target.id }, ratio: ratio });
+}
+function aiTick(sim, owner){
+  if (sim.over) return;
+  var d = DIFF[diffOf(sim, owner)];
+  var my = castlesOf(sim, owner);
+  if (!my.length) return;
+  var rng = sim.rng;
+  var mistake = rng() < d.mistake;   // 失误=选错目标，而非无脑送兵（否则会自我抽干锁死发展）
+
+  var threat = {}, i, c, k, sent = false;
+  for (i = 0; i < sim.armies.length; i++){
+    var a = sim.armies[i];
+    if (a.owner !== owner && a.tKind === 'c' && sim.castles[a.tid] && sim.castles[a.tid].owner === owner)
+      threat[a.tid] = (threat[a.tid] || 0) + a.count;
+  }
+  var pool = my.filter(function(c){ return c.garrison >= 12; });
+  var pickRandom = function(){
+    var t = sim.castles[Math.floor(rng() * sim.castles.length)];
+    return t.owner === owner ? null : t;
+  };
+
+  /* 1 扩张：己方城池不足时优先中立（弱城+近城优先，多路合击） */
+  var expandTo = Math.max(3, Math.ceil(sim.castles.length * 0.6));
+  var neutrals = sim.castles.filter(function(c){ return c.owner === 0; });
+  if (my.length < expandTo && neutrals.length && pool.length){
+    var t = mistake ? pickRandom() : null;
+    if (!t){
+      neutrals.forEach(function(c){
+        var score = c.garrison + dist(c.x, c.y, my[0].x, my[0].y) / 60;
+        if (!t || score < t.s) t = { c: c, s: score };
+      });
+      t = t.c;
+    }
+    var availE = 0;
+    pool.forEach(function(c){ availE += Math.floor(c.garrison * d.ratio); });
+    if (t && availE > t.garrison * 0.8 + 2){ aiSend(sim, owner, pool, t, d.ratio); sent = true; }
+  }
+  /* 2 回防 */
+  if (!sent){
+    var threatened = my.filter(function(c){ return (threat[c.id] || 0) > c.garrison + 2; })
+                       .sort(function(x, y){ return (threat[y.id] || 0) - (threat[x.id] || 0); });
+    if (threatened.length){
+      var t2 = threatened[0];
+      var near = my.filter(function(c){ return c !== t2 && c.garrison >= 8; })
+                   .sort(function(x, y){ return dist(x.x, x.y, t2.x, t2.y) - dist(y.x, y.y, t2.x, t2.y); });
+      if (near.length){ aiSend(sim, owner, [near[0]], t2, 1); sent = true; }
+    }
+  }
+  /* 3 升级兜底：某城驻军远超升级所需 → 自派一波触发升级（先爬科技再打仗） */
+  var upC = null;
+  for (k = 0; k < my.length; k++){
+    c = my[k];
+    var up = LEVELS[c.level - 1].up;
+    if (up && c.garrison >= up + 5 && (!upC || c.level < upC.level)) upC = c;
+  }
+  if (upC){
+    aiSend(sim, owner, [upC], upC, 1);
+    sent = true;
+  }
+  /* 4 发育：向最前线城池（staging）输血养大兵团，途经升级阈值即自动升级 */
+  if (!sent && my.length > 1){
+    var front = null, fd = Infinity;
+    for (k = 0; k < my.length; k++){
+      c = my[k];
+      var nd = Infinity;
+      for (var q2 = 0; q2 < sim.castles.length; q2++){
+        var oc = sim.castles[q2];
+        if (oc.owner === owner) continue;
+        nd = Math.min(nd, dist(c.x, c.y, oc.x, oc.y));
+      }
+      if (nd < fd){ fd = nd; front = c; }
+    }
+    var rich = null;
+    for (k = 0; k < my.length; k++){
+      c = my[k];
+      if (c !== front && c.garrison > 25 && (!rich || c.garrison > rich.garrison)) rich = c;
+    }
+    if (front && rich && rich.garrison - front.garrison > 20){
+      aiSend(sim, owner, [rich], front, d.ratio);
+      sent = true;
+    }
+  }
+  /* 5 进攻：单一城池集中优势兵力一波拿下（多路分批会被逐个击破） */
+  if (!sent){
+    var f = mistake ? pickRandom() : null;
+    if (!f){
+      var foes = sim.castles.filter(function(c){ return c.owner !== owner && c.owner !== 0; })
+                            .sort(function(x, y){ return x.garrison - y.garrison; });
+      f = foes[0] || null;
+    }
+    if (f){
+      var best = null, bv = 0;
+      for (k = 0; k < my.length; k++){
+        c = my[k];
+        if (c.garrison < d.minPool || dist(c.x, c.y, f.x, f.y) >= 1050) continue;
+        var v = Math.floor(c.garrison * d.atkRatio);
+        if (v > bv){ bv = v; best = c; }
+      }
+      if (best && bv > f.garrison * d.buffer + 4){ aiSend(sim, owner, [best], f, d.atkRatio); sent = true; }
+    }
+  }
+  /* 6 保底强攻：连续空转且城池接近满仓时，从最满的城池进攻最弱的外城
+     （门槛=九成容量：未满仓时出兵会中断积累造成发展锁死，满仓出兵无机会成本） */
+  if (!sent){
+    sim.aiIdle[owner] = (sim.aiIdle[owner] || 0) + 1;
+    if (sim.aiIdle[owner] >= 3){
+      sim.aiIdle[owner] = 0;
+      var src = my.slice().sort(function(x, y){ return y.garrison - x.garrison; })[0];
+      var tgt = null, tg = Infinity;
+      for (i = 0; i < sim.castles.length; i++){
+        c = sim.castles[i];
+        if (c.owner === owner) continue;
+        if (c.garrison < tg){ tg = c.garrison; tgt = c; }
+      }
+      if (src && src.garrison >= LEVELS[src.level - 1].cap * 0.9 && tgt){
+        aiSend(sim, owner, [src], tgt, d.ratio);
+        sent = true;
+      }
+    }
+  } else {
+    sim.aiIdle[owner] = 0;
+  }
+  /* 困难 AI 用卡：火攻玩家最大城 */
+  if (d.card && sim.t > 20 && sim.aiCardCd[owner] <= 0 && sim.ink[owner] >= 5 && rng() < 0.35){
+    var pc = sim.castles.filter(function(c){ return c.owner === 1; })
+                        .sort(function(x, y){ return y.garrison - x.garrison; });
+    if (pc.length){
+      applyCard(sim, 'fire', owner, pc[0].id);
+      sim.ink[owner] -= 5;
+      sim.aiCardCd[owner] = 45;
+      sim.events.push({ type: 'card', key: 'fire', name: '火攻', by: owner });
+    }
+  }
+}
+
+/* ---------- 固定步长推进 ---------- */
+function step(sim, dt){
+  if (sim.over) return;
+  sim.t += dt;
+
+  var i, c, o;
+  /* 1 命令 */
+  var q = sim.cmdQueue;
+  for (i = 0; i < q.length; i++) doSend(sim, q[i]);
+  q.length = 0;
+
+  /* 2 产兵 */
+  for (i = 0; i < sim.castles.length; i++){
+    c = sim.castles[i];
+    var L = LEVELS[c.level - 1];
+    c.garrison = Math.min(L.cap, c.garrison + L.rate * (c.weakT > 0 ? 0.5 : 1) * dt);
+  }
+  /* 3 部队推进与抵达 */
+  for (i = sim.armies.length - 1; i >= 0; i--){
+    var a = sim.armies[i];
+    var sp = CFG.SPEED * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1);
+    var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy);
+    var mv = sp * dt;
+    if (d <= mv){
+      resolveArrival(sim, a);
+      sim.armies.splice(i, 1);
+    } else {
+      a.x += dx / d * mv; a.y += dy / d * mv;
+    }
+  }
+  /* 3.5 在途遭遇：墨色相溶——异主部队相遇按兵力互相湮灭 */
+  for (i = 0; i < sim.armies.length; i++){
+    var ai = sim.armies[i];
+    if (ai.count < 1) continue;
+    for (var j = i + 1; j < sim.armies.length; j++){
+      var aj = sim.armies[j];
+      if (aj.count < 1 || aj.owner === ai.owner) continue;
+      if (dist(ai.x, ai.y, aj.x, aj.y) <= CFG.CLASH_R){
+        var kill = Math.min(ai.count, aj.count);
+        ai.count -= kill; aj.count -= kill;
+        sim.events.push({ type: 'clash', x: (ai.x + aj.x) / 2, y: (ai.y + aj.y) / 2 });
+        if (ai.count < 1) break;
+      }
+    }
+  }
+  sim.armies = sim.armies.filter(function(x){ return x.count >= 1; });
+  /* 4 阵列散逸 */
+  for (i = 0; i < sim.camps.length; i++){
+    var p = sim.camps[i];
+    p.decayAcc += dt;
+    if (p.decayAcc >= CFG.CAMP_DECAY){
+      if (p.count > 1) p.count--;
+      p.decayAcc -= CFG.CAMP_DECAY;
+    }
+  }
+  /* 5 计时器 */
+  for (i = 0; i < sim.castles.length; i++){
+    c = sim.castles[i];
+    if (c.shieldT > 0) c.shieldT = Math.max(0, c.shieldT - dt);
+    if (c.weakT > 0) c.weakT = Math.max(0, c.weakT - dt);
+    if (c.flashT > 0) c.flashT = Math.max(0, c.flashT - dt);
+  }
+  if (sim.effects.rushT > 0) sim.effects.rushT = Math.max(0, sim.effects.rushT - dt);
+  for (o = 1; o <= 4; o++) if (sim.aiCardCd[o] > 0) sim.aiCardCd[o] -= dt;
+
+  /* 6 墨量回复 */
+  for (o = 1; o <= 4; o++) sim.ink[o] = Math.min(CFG.INK_MAX, sim.ink[o] + CFG.INK_REGEN * dt);
+
+  /* 7 AI 决策（noAI 为单测/教学钩子：只跑玩家，不出手） */
+  if (!sim.opts.noAI){
+    for (o = 1; o <= 4; o++){
+      if (o === 1 && !sim.opts.ambient) continue;
+      var forces = castlesOf(sim, o).length > 0 || sim.armies.some(function(a){ return a.owner === o; });
+      if (!forces) continue;
+      sim.aiAcc[o] += dt;
+      var iv = DIFF[diffOf(sim, o)].interval;
+      if (sim.aiAcc[o] >= iv){
+        sim.aiAcc[o] = 0;
+        aiTick(sim, o);
+      }
+    }
+  }
+
+  /* 8 胜负判定 */
+  var pl = false, en = false;
+  for (i = 0; i < sim.castles.length; i++){
+    c = sim.castles[i];
+    if (c.owner === 1) pl = true;
+    else if (c.owner >= 2) en = true;
+  }
+  if (!en) sim.over = 1;
+  else if (!pl) sim.over = 2;
+}
+
+/* ---------- 导出 ---------- */
+var InkSim = { CFG: CFG, LEVELS: LEVELS, DIFF: DIFF, CARDS: CARDS, CAMPAIGN: CAMPAIGN,
+               createGame: createGame, command: command, cardPlay: cardPlay, canPlay: canPlay,
+               validTarget: validTarget, step: step, aiTick: aiTick, dist: dist };
+if (typeof window !== 'undefined') window.InkSim = InkSim;
+if (typeof module !== 'undefined' && module.exports) module.exports = InkSim;
+})();
+</script>
+
+<script>
+/* ============================================================
+ * 块2 · UI 层（IIFE）—— 渲染 / 输入 / 音效 / 流程 / 存档
+ * ============================================================ */
+(function(){
+'use strict';
+var Sim = window.InkSim;
+var CFG = Sim.CFG, CARDS = Sim.CARDS, CARD_BY_KEY = {};
+CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
+var dist = Sim.dist;   // 几何工具（逻辑块同源）
+
+/* ===== DOM ===== */
+var canvas = document.getElementById('board'), ctx = canvas.getContext('2d');
+var elInkfill = document.getElementById('inkfill'), elInkwrap = document.getElementById('inkwrap'), elInkval = document.getElementById('inkval');
+var elTime = document.getElementById('timeval'), elMy = document.getElementById('myval'), elFoe = document.getElementById('foeval');
+var elOverlay = document.getElementById('overlay'), elPanel = document.getElementById('panel');
+var elCards = document.getElementById('cards'), elRatio = document.getElementById('ratio'), elHint = document.getElementById('hint');
+var elPause = document.getElementById('btnPause');
+
+/* ===== 存档 ===== */
+function loadNum(key, dflt){ try { var v = localStorage.getItem(key); return v == null ? dflt : +v; } catch(e){ return dflt; } }
+function loadJSON(key, dflt){ try { var v = localStorage.getItem(key); return v ? JSON.parse(v) : dflt; } catch(e){ return dflt; } }
+function save(key, val){ try { localStorage.setItem(key, val); } catch(e){} }
+var progress = loadNum('ink.progress', 1);        // 已解锁的最大关（1..10）
+var best = loadNum('ink.best', 0);                // 最快胜利秒数
+var soundOn = loadNum('ink.sound', 1) === 1;
+var lastCfg = loadJSON('ink.cfg', { opponents: 1, size: 11, diff: 'normal' });
+
+/* ===== 音效（WebAudio 合成） ===== */
+var Sound = {
+  ac: null,
+  ensure: function(){
+    if (!this.ac){ try { this.ac = new (window.AudioContext || window.webkitAudioContext)(); } catch(e){} }
+    if (this.ac && this.ac.state === 'suspended') this.ac.resume();
+  },
+  tone: function(freq, dur, type, vol, slideTo){
+    if (!soundOn || !this.ac) return;
+    var t0 = this.ac.currentTime;
+    var o = this.ac.createOscillator(), g = this.ac.createGain();
+    o.type = type || 'triangle'; o.frequency.setValueAtTime(freq, t0);
+    if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+    g.gain.setValueAtTime(vol || 0.12, t0);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g); g.connect(this.ac.destination);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  },
+  seq: function(arr, gap, dur, type, vol){
+    var self = this;
+    arr.forEach(function(f, i){ setTimeout(function(){ self.tone(f, dur || 0.14, type || 'triangle', vol || 0.12); }, i * (gap || 90)); });
+  },
+  select: function(){ this.tone(660, 0.05, 'triangle', 0.07); },
+  send: function(){ this.tone(320, 0.16, 'sawtooth', 0.06, 120); },
+  capture: function(){ this.seq([523, 784], 70, 0.16); },
+  upgrade: function(){ this.seq([660, 990], 80, 0.16); },
+  card: function(){ this.tone(880, 0.14, 'triangle', 0.12, 1320); },
+  err: function(){ this.tone(150, 0.12, 'square', 0.08); },
+  block: function(){ this.tone(220, 0.1, 'square', 0.06, 160); },
+  win: function(){ this.seq([523, 659, 784, 1046], 110, 0.22); },
+  lose: function(){ this.seq([330, 262, 196], 160, 0.3, 'triangle', 0.1); },
+};
+
+/* ===== 状态 ===== */
+var mode = 'menu';              // menu | playing | paused | over
+var sim = null;                 // 当前对局
+var menuSim = null;             // 大厅环境对局（AI 混战背景）
+var selection = [];             // [{k:'c'|'p', id}]
+var ratio = 1;
+var aim = null;                 // {slot}
+var floats = [], fxs = [];      // 表现层特效
+var boxRect = null;             // 框选 {x,y,w,h}
+var dragArrow = null;           // 拖拽派遣预览 {x,y,tx,ty,count}
+var cfg = { opponents: lastCfg.opponents, size: lastCfg.size, diff: lastCfg.diff };
+var STEP = 1 / 30, acc = 0, lastT = 0, hudT = 0;
+
+/* ===== 工具 ===== */
+function fmt(t){ t = Math.floor(t); return Math.floor(t / 60) + ':' + ('0' + t % 60).slice(-2); }
+function castleColor(o){
+  return o === 1 ? ['#d4553f', '#8e2a1d'] : o === 2 ? ['#3d7d8f', '#1d4551'] :
+         o === 3 ? ['#c08a52', '#7a4c22'] : o === 4 ? ['#5d8a5e', '#2f5230'] : ['#a09a8a', '#6f6a5c'];
+}
+function castleR(c){ return 26 + (c.level - 1) * 6; }
+
+/* ===== 背景离屏预渲染（宣纸 + 远山 + 印章） ===== */
+var bg = document.createElement('canvas'); bg.width = CFG.MAP_W; bg.height = CFG.MAP_H;
+(function paintBG(){
+  var b = bg.getContext('2d');
+  b.fillStyle = '#f5f0e0'; b.fillRect(0, 0, CFG.MAP_W, CFG.MAP_H);
+  var g1 = b.createRadialGradient(400, 180, 40, 400, 180, 700);
+  g1.addColorStop(0, 'rgba(43,42,38,.055)'); g1.addColorStop(1, 'rgba(43,42,38,0)');
+  b.fillStyle = g1; b.fillRect(0, 0, CFG.MAP_W, CFG.MAP_H);
+  var g2 = b.createRadialGradient(1350, 780, 40, 1350, 780, 650);
+  g2.addColorStop(0, 'rgba(44,95,110,.06)'); g2.addColorStop(1, 'rgba(44,95,110,0)');
+  b.fillStyle = g2; b.fillRect(0, 0, CFG.MAP_W, CFG.MAP_H);
+  var sun = b.createRadialGradient(1400, 140, 10, 1400, 140, 110);
+  sun.addColorStop(0, 'rgba(179,51,39,.16)'); sun.addColorStop(1, 'rgba(179,51,39,0)');
+  b.fillStyle = sun; b.fillRect(1250, 0, 350, 300);
+  function mountain(cx, base, w, h, alpha){
+    b.beginPath();
+    b.moveTo(cx - w, base);
+    b.quadraticCurveTo(cx - w * 0.35, base - h, cx, base - h);
+    b.quadraticCurveTo(cx + w * 0.3, base - h * 0.82, cx + w, base);
+    b.closePath();
+    b.fillStyle = 'rgba(72,68,58,' + alpha + ')'; b.fill();
+  }
+  mountain(180, 900, 340, 190, 0.09);
+  mountain(430, 900, 260, 130, 0.06);
+  mountain(1180, 900, 380, 160, 0.075);
+  b.strokeStyle = 'rgba(72,68,58,.14)'; b.lineWidth = 3;
+  b.beginPath(); b.moveTo(60, 760); b.quadraticCurveTo(300, 742, 520, 758); b.stroke();
+  b.font = '120px "STKaiti","KaiTi","楷体",serif';
+  b.fillStyle = 'rgba(43,42,38,.06)';
+  b.fillText('墨', 60, 250);
+})();
+
+/* ===== 流程：遮罩层 ===== */
+function hideOverlay(){ elOverlay.classList.add('hide'); }
+function showOverlay(html){ elPanel.innerHTML = html; elOverlay.classList.remove('hide'); elPanel.scrollTop = 0; }
+
+function showMenu(){
+  mode = 'menu';
+  selection = []; aim = null; floats = []; fxs = [];
+  var lvls = '';
+  for (var i = 1; i <= 10; i++){
+    var st = i < progress ? 'done' : i === progress ? 'now' : 'lock';
+    lvls += '<button class="lvl ' + st + '" data-lv="' + i + '"' + (i > progress ? ' disabled' : '') + '>' + i + '</button>';
+  }
+  showOverlay(
+    '<h1>墨<i>·</i>战</h1>' +
+    '<div class="motto">—— 笔落惊风雨 · 一局定江山 ——</div>' +
+    '<div class="pbox">' +
+      '<div class="ptitle">⚔ 快速对战 <small>3~5 分钟一局</small></div>' +
+      '<div class="optrow"><span class="lab">对手</span>' +
+        [1, 2, 3].map(function(n){ return '<button class="opt' + (cfg.opponents === n ? ' sel' : '') + '" data-op="' + n + '">' + n + '</button>'; }).join('') + '</div>' +
+      '<div class="optrow"><span class="lab">地图</span>' +
+        [[8, '小'], [11, '中'], [14, '大']].map(function(s){ return '<button class="opt' + (cfg.size === s[0] ? ' sel' : '') + '" data-size="' + s[0] + '">' + s[1] + '·' + s[0] + '城</button>'; }).join('') + '</div>' +
+      '<div class="optrow"><span class="lab">难度</span>' +
+        ['easy', 'normal', 'hard'].map(function(d){ return '<button class="opt' + (cfg.diff === d ? ' sel' : '') + '" data-diff="' + d + '">' + ({ easy: '容易', normal: '普通', hard: '困难' })[d] + '</button>'; }).join('') + '</div>' +
+      '<button class="bigbtn" id="btnQuick">开 战 ！</button>' +
+    '</div>' +
+    '<div class="pbox">' +
+      '<div class="ptitle">卷 闯关 <small>进度 ' + Math.min(progress, 10) + ' / 10</small></div>' +
+      '<div class="lvlgrid">' + lvls + '</div>' +
+    '</div>' +
+    '<div class="mfoot">' +
+      '<button class="tbtn" id="btnSound">♪ 音效：' + (soundOn ? '开' : '关') + '</button>' +
+      '<span>' + (best ? '最快胜利 ' + fmt(best) : '尚未凯旋') + '</span>' +
+    '</div>'
+  );
+  document.getElementById('btnQuick').onclick = startQuick;
+  document.getElementById('btnSound').onclick = function(){
+    soundOn = !soundOn; save('ink.sound', soundOn ? 1 : 0); showMenu();
+  };
+  elPanel.querySelectorAll('[data-op]').forEach(function(b){
+    b.onclick = function(){ cfg.opponents = +b.dataset.op; save('ink.cfg', cfg); Sound.select(); showMenu(); };
+  });
+  elPanel.querySelectorAll('[data-size]').forEach(function(b){
+    b.onclick = function(){ cfg.size = +b.dataset.size; save('ink.cfg', cfg); Sound.select(); showMenu(); };
+  });
+  elPanel.querySelectorAll('[data-diff]').forEach(function(b){
+    b.onclick = function(){ cfg.diff = b.dataset.diff; save('ink.cfg', cfg); Sound.select(); showMenu(); };
+  });
+  elPanel.querySelectorAll('.lvl:not(:disabled)').forEach(function(b){
+    b.onclick = function(){ startCampaign(+b.dataset.lv); };
+  });
+}
+
+function showPause(){
+  showOverlay(
+    '<h1>暂<i>·</i>停</h1>' +
+    '<div class="motto">运筹帷幄之中，决胜千里之外</div>' +
+    '<div class="btnrow">' +
+      '<button class="bb pri" id="btnResume">继续</button>' +
+      '<button class="bb" id="btnRestart">重开本局</button>' +
+      '<button class="bb" id="btnMenu1">返回菜单</button>' +
+    '</div>'
+  );
+  document.getElementById('btnResume').onclick = resume;
+  document.getElementById('btnRestart').onclick = restart;
+  document.getElementById('btnMenu1').onclick = backToMenu;
+}
+
+function showResult(){
+  var win = sim.over === 1;
+  if (win){
+    Sound.win();
+    if (sim.opts.mode === 'campaign'){
+      var lv = sim.opts.level;
+      if (lv >= progress){ progress = Math.min(10, lv + 1); save('ink.progress', progress); }
+    } else if (!best || sim.t < best){ best = Math.floor(sim.t); save('ink.best', best); }
+  } else Sound.lose();
+
+  var campMsg = '';
+  if (sim.opts.mode === 'campaign'){
+    campMsg = win ? (sim.opts.level >= 10 ? '<br><span style="color:var(--cinnabar)">十关俱破 · 问鼎天下！</span>'
+                   : '<br><span style="color:var(--cinnabar)">第 ' + (sim.opts.level + 1) + ' 关已解锁</span>')
+                  : '<br><span>第 ' + sim.opts.level + ' 关可再战</span>';
+  }
+  showOverlay(
+    '<div class="stamp ' + (win ? 'win">胜<small>JIANGSHAN</small>' : 'lose">败<small>ZHENGUO</small>') + '</div>' +
+    '<h1 style="font-size:24px;letter-spacing:8px;text-indent:8px">' + (win ? '江山尽入吾墨' : '卷土重来未可知') + '</h1>' +
+    '<div class="rstat">用时 <b>' + fmt(sim.t) + '</b> · 占领 <b>' + sim.stats.capturedBy[1] + '</b> 城 · 用卡 <b>' + sim.stats.cardsUsed + '</b> 张' + campMsg + '</div>' +
+    '<div class="btnrow">' +
+      '<button class="bb pri" id="btnAgain">' + (win ? '再来一局' : '再战此局') + '</button>' +
+      '<button class="bb" id="btnMenu2">返回菜单</button>' +
+    '</div>'
+  );
+  document.getElementById('btnAgain').onclick = restart;
+  document.getElementById('btnMenu2').onclick = backToMenu;
+}
+
+/* ===== 流程：开局 / 暂停 / 结束 ===== */
+function startGame(opts){
+  sim = Sim.createGame(opts);
+  selection = []; aim = null; floats = []; fxs = []; boxRect = null; dragArrow = null;
+  acc = 0;
+  mode = 'playing';
+  hideOverlay();
+  setHint(HINT_DEFAULT);
+  renderHand();
+  updateHud(true);
+  Sound.ensure();
+  Sound.capture();
+}
+function startQuick(){
+  Sound.ensure();
+  startGame({ mode: 'quick', opponents: cfg.opponents, castles: cfg.size, diff: cfg.diff });
+}
+function startCampaign(lv){
+  Sound.ensure();
+  var c = Sim.CAMPAIGN[lv - 1];
+  startGame({ mode: 'campaign', level: lv, castles: c.castles, opponents: c.opponents, diff: c.diff, bonus: c.bonus });
+}
+function restart(){
+  if (!sim) { showMenu(); return; }
+  if (sim.opts.mode === 'campaign') startCampaign(sim.opts.level);
+  else startQuick();
+}
+function backToMenu(){ Sound.ensure(); showMenu(); }
+function pause(){ if (mode !== 'playing') return; mode = 'paused'; showPause(); }
+function resume(){ if (mode !== 'paused') return; mode = 'playing'; hideOverlay(); }
+function togglePause(){ if (mode === 'playing') pause(); else if (mode === 'paused') resume(); }
+function endGame(){
+  mode = 'over';
+  selection = []; aim = null;
+  updateHud(true);
+  renderHand();
+  showResult();
+}
+
+/* ===== 卡牌栏 ===== */
+function inkOK(slot){ return sim && sim.ink[1] >= CARD_BY_KEY[sim.hand[slot]].cost; }
+function renderHand(){
+  var html = '';
+  for (var i = 0; i < 3; i++){
+    var key = sim ? sim.hand[i] : null;
+    if (!key){ html += '<button class="card dim" disabled></button>'; continue; }
+    var card = CARD_BY_KEY[key];
+    var cls = 'card' + (mode === 'playing' && !inkOK(i) ? ' dim' : '') + (aim && aim.slot === i ? ' aim' : '');
+    html += '<button class="' + cls + '" data-slot="' + i + '">' +
+            '<div class="cn">' + card.name + '</div><div class="cd">' + card.desc + '</div>' +
+            '<div class="cc">墨 ' + card.cost + '</div></button>';
+  }
+  elCards.innerHTML = html;
+  elCards.querySelectorAll('.card[data-slot]').forEach(function(b){
+    b.onclick = function(){ onCardClick(+b.dataset.slot, b); };
+  });
+}
+function onCardClick(slot, btn){
+  if (mode !== 'playing') return;
+  if (aim && aim.slot === slot){ cancelAim(); return; }
+  var cp = Sim.canPlay(sim, slot, 1);
+  if (!cp.ok){
+    btn.classList.remove('shake'); void btn.offsetWidth; btn.classList.add('shake');
+    elInkwrap.classList.remove('flash'); void elInkwrap.offsetWidth; elInkwrap.classList.add('flash');
+    elHint.textContent = cp.reason;
+    Sound.err();
+    return;
+  }
+  var card = CARD_BY_KEY[sim.hand[slot]];
+  if (card.target){
+    aim = { slot: slot };
+    elHint.textContent = '「' + card.name + '」· 点击目标城池发动（再点卡取消）';
+    renderHand();
+    Sound.select();
+  } else {
+    if (Sim.cardPlay(sim, slot)){ Sound.card(); renderHand(); }
+  }
+}
+function cancelAim(){
+  aim = null;
+  setHint(HINT_DEFAULT);
+  renderHand();
+}
+
+elRatio.querySelectorAll('b').forEach(function(b){
+  b.onclick = function(){
+    ratio = +b.dataset.r;
+    elRatio.querySelectorAll('b').forEach(function(x){ x.classList.toggle('on', x === b); });
+    Sound.select();
+  };
+});
+elPause.onclick = function(){ if (mode === 'playing' || mode === 'paused') togglePause(); };
+
+/* ===== 输入（统一 Pointer，rect 缩放换算） ===== */
+function toVirtual(e){
+  var rect = canvas.getBoundingClientRect();
+  return { x: (e.clientX - rect.left) / rect.width * CFG.MAP_W,
+           y: (e.clientY - rect.top) / rect.height * CFG.MAP_H };
+}
+function hitCastle(v, ownerFilter){
+  for (var i = 0; i < sim.castles.length; i++){
+    var c = sim.castles[i];
+    if (ownerFilter != null && c.owner !== ownerFilter) continue;
+    if (dist(v.x, v.y, c.x, c.y) <= castleR(c) + 12) return c;
+  }
+  return null;
+}
+function hitCamp(v, ownerFilter){
+  for (var i = 0; i < sim.camps.length; i++){
+    var p = sim.camps[i];
+    if (ownerFilter != null && p.owner !== ownerFilter) continue;
+    if (dist(v.x, v.y, p.x, p.y) <= 34) return p;
+  }
+  return null;
+}
+function selHas(k, id){ return selection.some(function(s){ return s.k === k && s.id === id; }); }
+function selToggle(k, id){
+  var i = selection.findIndex(function(s){ return s.k === k && s.id === id; });
+  if (i >= 0) selection.splice(i, 1); else selection.push({ k: k, id: id });
+  Sound.select();
+}
+function pruneSelection(){
+  selection = selection.filter(function(s){
+    if (s.k === 'c'){ var c = sim.castles[s.id]; return c && c.owner === 1; }
+    var p = sim.camps[s.id]; return p && p.owner === 1;
+  });
+}
+function dispatch(sources, target){
+  pruneSelection();
+  var from = sources.filter(function(s){
+    return s.k === 'c' ? (sim.castles[s.id] && sim.castles[s.id].owner === 1)
+                       : (sim.camps[s.id] && sim.camps[s.id].owner === 1);
+  });
+  if (!from.length) return;
+  Sim.command(sim, {
+    owner: 1,
+    from: from,
+    to: target.k === 'c' ? { k: 'c', id: target.id } : { k: 'pt', x: target.x, y: target.y },
+    ratio: ratio,
+  });
+  selection = [];                                    // 派遣后清空选择，防止误触列阵
+  setHint('已派遣 · 重新框选可再派<br>点空地 = 列阵屯兵');
+  Sound.send();
+}
+function setHint(html){ elHint.innerHTML = html; }
+var HINT_DEFAULT = '拖框多选己方城池<br>点击目标即派遣<br>点空地可列阵屯兵';
+function boxSelect(x0, y0, x1, y1){
+  var lx = Math.min(x0, x1), rx = Math.max(x0, x1), ty = Math.min(y0, y1), by = Math.max(y0, y1);
+  boxRect = { x: lx, y: ty, w: rx - lx, h: by - ty };
+  selection = [];
+  sim.castles.forEach(function(c){
+    if (c.owner === 1 && c.x >= lx - 10 && c.x <= rx + 10 && c.y >= ty - 10 && c.y <= by + 10)
+      selection.push({ k: 'c', id: c.id });
+  });
+  sim.camps.forEach(function(p){
+    if (p.owner === 1 && p.x >= lx - 10 && p.x <= rx + 10 && p.y >= ty - 10 && p.y <= by + 10)
+      selection.push({ k: 'p', id: p.id });
+  });
+}
+
+var ptr = { down: false, sx: 0, sy: 0, x: 0, y: 0, moved: false, from: null };
+canvas.addEventListener('pointerdown', function(e){
+  Sound.ensure();
+  if (mode !== 'playing') return;
+  e.preventDefault();
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* 合成事件/指针已释放时无需捕获 */ }
+  var v = toVirtual(e);
+  ptr.down = true; ptr.moved = false;
+  ptr.sx = v.x; ptr.sy = v.y; ptr.x = v.x; ptr.y = v.y;
+  var c = hitCastle(v, 1), p = c ? null : hitCamp(v, 1);
+  ptr.from = c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
+});
+canvas.addEventListener('pointermove', function(e){
+  if (mode !== 'playing' || !ptr.down) return;
+  var v = toVirtual(e);
+  ptr.x = v.x; ptr.y = v.y;
+  if (!ptr.moved && dist(ptr.sx, ptr.sy, v.x, v.y) > 14) ptr.moved = true;
+  if (ptr.moved){
+    if (aim){ return; }
+    if (ptr.from){
+      var s = ptr.from.k === 'c' ? sim.castles[ptr.from.id] : sim.camps[ptr.from.id];
+      var n = s ? Math.floor((ptr.from.k === 'c' ? s.garrison : s.count) * ratio) : 0;
+      dragArrow = { x: s.x, y: s.y, tx: v.x, ty: v.y, count: n };
+      boxRect = null;
+    } else {
+      dragArrow = null;
+      boxSelect(ptr.sx, ptr.sy, v.x, v.y);
+    }
+  }
+});
+canvas.addEventListener('pointerup', function(e){
+  if (mode !== 'playing' || !ptr.down) return;
+  ptr.down = false;
+  var v = toVirtual(e);
+  var moved = ptr.moved;
+  boxRect = null; dragArrow = null;
+
+  if (aim){                                          // 瞄准模式：点目标 / 点空白取消
+    var t = hitCastle(v);
+    if (t && Sim.validTarget(sim, sim.hand[aim.slot], 1, t.id)){
+      var slot = aim.slot;
+      var cardName = CARD_BY_KEY[sim.hand[slot]].name;
+      if (Sim.cardPlay(sim, slot, t.id)){
+        Sound.card();
+        floats.push({ x: t.x, y: t.y - castleR(t) - 14, txt: '「' + cardName + '」', color: '#b33327', t: 0, life: 1 });
+        cancelAim();
+      }
+    } else if (t){
+      fxs.push({ x: t.x, y: t.y, t: 0.4, life: 0.4, color: '#e03e2e' });
+      Sound.err();
+    } else {
+      cancelAim();
+    }
+    return;
+  }
+
+  if (moved){
+    if (ptr.from){                                    // 从城池拖出 = 直接派遣
+      var tc = hitCastle(v);
+      dispatch([ptr.from], tc ? { k: 'c', id: tc.id } : { k: 'pt', x: v.x, y: v.y });
+    } else {                                          // 框选完成（选择已在 move 中实时更新）
+      if (selection.length){
+        setHint('已选 <b>' + selection.length + '</b> 处 · 点击目标派遣<br>点空地 = 列阵屯兵');
+        Sound.select();
+      }
+    }
+    return;
+  }
+
+  /* 点按 */
+  var c = hitCastle(v), p = c ? null : hitCamp(v, 1);
+  if (c && c.owner === 1){ selToggle('c', c.id); return; }
+  if (p && p.owner === 1){ selToggle('p', p.id); return; }
+  if (selection.length){
+    dispatch(selection, c ? { k: 'c', id: c.id } : { k: 'pt', x: v.x, y: v.y });
+    return;
+  }
+  if (c || p){ setHint('先框选己方城池'); return; }
+  selection = [];
+});
+window.addEventListener('keydown', function(e){
+  if (e.code === 'Space'){ e.preventDefault(); togglePause(); }
+  else if (e.code === 'Escape'){
+    if (aim) cancelAim();
+    else if (mode === 'playing') pause();
+  }
+});
+
+/* ===== HUD ===== */
+function updateHud(force){
+  if (!sim) return;
+  elInkfill.style.width = (sim.ink[1] / CFG.INK_MAX * 100) + '%';
+  elInkval.textContent = (Math.floor(sim.ink[1] * 10) / 10).toFixed(1);
+  elTime.textContent = fmt(sim.t);
+  var my = 0, foe = 0;
+  sim.castles.forEach(function(c){ if (c.owner === 1) my++; else if (c.owner >= 2) foe++; });
+  elMy.textContent = my; elFoe.textContent = foe;
+  renderHandThrottled(force);
+}
+var lastHandSig = '';
+function renderHandThrottled(force){
+  var sig = mode + '|' + sim.hand.join(',') + '|' + Math.floor(sim.ink[1]) + '|' + (aim ? aim.slot : -1);
+  if (force || sig !== lastHandSig){ lastHandSig = sig; renderHand(); }
+}
+
+/* ===== 事件 → 表现层 ===== */
+function drainEvents(){
+  for (var i = 0; i < sim.events.length; i++){
+    var ev = sim.events[i];
+    switch (ev.type){
+      case 'capture':
+        fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.7, color: ev.owner === 1 ? '#b33327' : '#2c5f6e' });
+        if (ev.owner === 1) floats.push({ x: ev.x, y: ev.y - 40, txt: '占领 +2墨', color: '#b33327', t: 0, life: 1.1 });
+        Sound.capture();
+        break;
+      case 'upgrade':
+        floats.push({ x: ev.x, y: ev.y - 42, txt: '升级 Lv' + ev.level, color: '#c9962e', t: 0, life: 1.1 });
+        Sound.upgrade();
+        break;
+      case 'card':
+        floats.push({ x: CFG.MAP_W / 2, y: 70, txt: '「' + ev.name + '」', color: ev.by >= 2 ? '#2c5f6e' : '#b33327', t: 0, life: 1.4 });
+        if (ev.by >= 2) Sound.block(); else Sound.card();
+        break;
+      case 'burn':
+        fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.6, color: '#d4553f' });
+        floats.push({ x: ev.x, y: ev.y - 40, txt: '火攻！', color: '#b33327', t: 0, life: 1 });
+        break;
+      case 'block':
+        fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.4, color: '#c9962e' });
+        Sound.block();
+        break;
+      case 'clash':                              // 墨色相溶：在途部队互相湮灭
+        fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.45, color: '#3a3a3a' });
+        break;
+      case 'hint':
+        floats.push({ x: CFG.MAP_W / 2, y: 70, txt: ev.txt, color: '#57534a', t: 0, life: 1.4 });
+        break;
+    }
+  }
+  sim.events.length = 0;
+}
+
+/* ===== 渲染 ===== */
+function fitCanvas(){
+  var rect = canvas.getBoundingClientRect();
+  var dpr = Math.min(2, window.devicePixelRatio || 1);
+  var w = Math.round(rect.width * dpr), h = Math.round(rect.height * dpr);
+  if (canvas.width !== w || canvas.height !== h){ canvas.width = w; canvas.height = h; }
+}
+function drawCastle(c, selected, aimingValid, tGlobal){
+  var col = castleColor(c.owner), r = castleR(c);
+  if (c.flashT > 0){                                  // 占领晕染扩散环
+    var k = 1 - c.flashT / 0.6;
+    ctx.strokeStyle = col[0]; ctx.globalAlpha = (1 - k) * 0.8; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r + 12 + k * 40, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(c.x, c.y, r + 4 + k * 22, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  var g = ctx.createRadialGradient(c.x - r * 0.35, c.y - r * 0.4, r * 0.15, c.x, c.y, r);
+  g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, 7); ctx.fill();
+  ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 2.5; ctx.stroke();
+  ctx.setLineDash([5, 5]);                            // 等级虚线环
+  ctx.strokeStyle = 'rgba(43,42,38,.35)'; ctx.lineWidth = 1.6;
+  ctx.beginPath(); ctx.arc(c.x, c.y, r + 9, 0, 7); ctx.stroke();
+  ctx.setLineDash([]);
+  if (c.shieldT > 0){                                 // 护盾金环
+    ctx.strokeStyle = 'rgba(201,150,46,' + (0.55 + 0.3 * Math.sin(tGlobal * 6)) + ')';
+    ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r + 5, 0, 7); ctx.stroke();
+  }
+  if (c.weakT > 0){
+    ctx.font = '15px "STKaiti","KaiTi","楷体",serif';
+    ctx.fillStyle = 'rgba(90,60,110,.9)'; ctx.textAlign = 'center';
+    ctx.fillText('弱', c.x, c.y - r - 16);
+  }
+  ctx.font = 'bold 20px "STKaiti","KaiTi","楷体",serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(30,26,20,.55)';
+  var txt = String(Math.floor(c.garrison));
+  ctx.strokeText(txt, c.x, c.y + 1);
+  ctx.fillStyle = '#f7f2e3'; ctx.fillText(txt, c.x, c.y + 1);
+  if (selected){
+    ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 3.5;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r + 14, 0, 7); ctx.stroke();
+    ctx.font = 'bold 13px "STKaiti","KaiTi","楷体",serif';
+    ctx.fillStyle = '#c9962e';
+    ctx.fillText(ratio === 0.5 ? '50%' : '100%', c.x, c.y - r - 24);
+  }
+  if (aimingValid){
+    ctx.strokeStyle = 'rgba(179,51,39,' + (0.45 + 0.35 * Math.sin(tGlobal * 7)) + ')';
+    ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(c.x, c.y, r + 13, 0, 7); ctx.stroke();
+  }
+}
+function drawCamp(p, selected){
+  var col = castleColor(p.owner);
+  ctx.save();
+  ctx.translate(p.x, p.y); ctx.rotate(Math.PI / 4);
+  ctx.strokeStyle = col[1]; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
+  ctx.strokeRect(-17, -17, 34, 34);
+  ctx.fillStyle = 'rgba(179,51,39,.10)'; ctx.fillRect(-17, -17, 34, 34);
+  ctx.restore();
+  ctx.setLineDash([]);
+  ctx.font = 'bold 14px "STKaiti","KaiTi","楷体",serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = col[1]; ctx.fillText('屯' + Math.floor(p.count), p.x, p.y);
+  if (selected){
+    ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(p.x, p.y, 26, 0, 7); ctx.stroke();
+  }
+}
+function drawArmy(a){
+  var col = castleColor(a.owner);
+  var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+  var ux = dx / d, uy = dy / d;
+  var n = Math.min(6, Math.max(2, Math.round(a.count / 8)));
+  var rr = 3 + Math.min(3, a.count / 25);
+  for (var i = n - 1; i >= 0; i--){
+    ctx.globalAlpha = 1 - i * 0.13;
+    ctx.fillStyle = col[1];
+    ctx.beginPath(); ctx.arc(a.x - ux * i * 11, a.y - uy * i * 11, rr - i * 0.25, 0, 7); ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  if (a.count >= 8){
+    ctx.font = '12px "STKaiti","KaiTi","楷体",serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(43,42,38,.75)';
+    ctx.fillText(Math.floor(a.count), a.x, a.y - 13);
+  }
+}
+function draw(simToDraw, tGlobal){
+  fitCanvas();
+  var s = Math.min(canvas.width / CFG.MAP_W, canvas.height / CFG.MAP_H);
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.fillStyle = '#f5f0e0'; ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.setTransform(s, 0, 0, s, (canvas.width - CFG.MAP_W * s) / 2, (canvas.height - CFG.MAP_H * s) / 2);
+  ctx.drawImage(bg, 0, 0);
+
+  var i;
+  for (i = 0; i < simToDraw.camps.length; i++)
+    drawCamp(simToDraw.camps[i], simToDraw === sim && selHas('p', simToDraw.camps[i].id));
+  for (i = 0; i < simToDraw.armies.length; i++) drawArmy(simToDraw.armies[i]);
+  for (i = 0; i < simToDraw.castles.length; i++){
+    var c = simToDraw.castles[i];
+    var aimingValid = false;
+    if (aim && simToDraw === sim) aimingValid = Sim.validTarget(sim, sim.hand[aim.slot], 1, c.id);
+    drawCastle(c, simToDraw === sim && selHas('c', c.id), aimingValid, tGlobal);
+  }
+
+  for (i = 0; i < fxs.length; i++){                   // 特效扩散环
+    var fx = fxs[i], k = fx.t / fx.life;
+    ctx.strokeStyle = fx.color; ctx.globalAlpha = (1 - k) * 0.7; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(fx.x, fx.y, 26 + k * 52, 0, 7); ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+  for (i = 0; i < floats.length; i++){                // 浮字
+    var f = floats[i], k = f.t / f.life;
+    ctx.globalAlpha = 1 - k;
+    ctx.font = 'bold 18px "STKaiti","KaiTi","楷体",serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = f.color;
+    ctx.fillText(f.txt, f.x, f.y - k * 26);
+    ctx.globalAlpha = 1;
+  }
+  if (boxRect){                                       // 框选矩形
+    ctx.fillStyle = 'rgba(179,51,39,.09)'; ctx.fillRect(boxRect.x, boxRect.y, boxRect.w, boxRect.h);
+    ctx.strokeStyle = 'rgba(179,51,39,.85)'; ctx.lineWidth = 2; ctx.setLineDash([7, 5]);
+    ctx.strokeRect(boxRect.x, boxRect.y, boxRect.w, boxRect.h);
+    ctx.setLineDash([]);
+  }
+  if (dragArrow && dragArrow.count >= 1){             // 拖拽派遣预览
+    ctx.strokeStyle = 'rgba(142,42,29,.8)'; ctx.lineWidth = 2.5; ctx.setLineDash([9, 6]);
+    ctx.beginPath(); ctx.moveTo(dragArrow.x, dragArrow.y); ctx.lineTo(dragArrow.tx, dragArrow.ty); ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.font = 'bold 15px "STKaiti","KaiTi","楷体",serif'; ctx.textAlign = 'center';
+    ctx.fillStyle = '#8e2a1d';
+    ctx.fillText(dragArrow.count + ' 兵', (dragArrow.x + dragArrow.tx) / 2, (dragArrow.y + dragArrow.ty) / 2 - 10);
+  }
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+}
+
+/* ===== 主循环 ===== */
+function loop(t){
+  var dt = Math.min(50, t - lastT);
+  lastT = t;
+  var i;
+  if (mode === 'playing' && sim){
+    acc += dt;
+    while (acc >= STEP * 1000){
+      Sim.step(sim, STEP);
+      acc -= STEP * 1000;
+      if (sim.over) break;
+    }
+    drainEvents();
+    if (sim.over) endGame();
+    hudT += dt;
+    if (hudT > 250){ hudT = 0; updateHud(); }
+  } else if (mode === 'menu' && menuSim){
+    acc += dt;
+    while (acc >= STEP * 1000){
+      Sim.step(menuSim, STEP);
+      acc -= STEP * 1000;
+      if (menuSim.over){ menuSim = Sim.createGame({ mode: 'ambient', opponents: 3, castles: 11, diff: 'normal', ambient: true, seed: (Math.random() * 1e9) | 0 }); break; }
+    }
+    menuSim.events.length = 0;                       // 环境局不消费事件，直接丢弃
+    for (i = floats.length - 1; i >= 0; i--){ floats[i].t += dt / 1000; if (floats[i].t >= floats[i].life) floats.splice(i, 1); }
+    for (i = fxs.length - 1; i >= 0; i--){ fxs[i].t += dt / 1000; if (fxs[i].t >= fxs[i].life) fxs.splice(i, 1); }
+  }
+  if (mode !== 'menu'){                                // 浮字/特效计时（对局中也走这里）
+    for (i = floats.length - 1; i >= 0; i--){ floats[i].t += dt / 1000; if (floats[i].t >= floats[i].life) floats.splice(i, 1); }
+    for (i = fxs.length - 1; i >= 0; i--){ fxs[i].t += dt / 1000; if (fxs[i].t >= fxs[i].life) fxs.splice(i, 1); }
+  }
+  draw(mode === 'menu' ? menuSim : sim, t / 1000);
+  requestAnimationFrame(loop);
+}
+
+/* ===== 调试钩子（仅 ?debug 生效）：供自动化测试泵动模拟与读取状态 ===== */
+if (location.search.indexOf('debug') >= 0){
+  window.__ink = {
+    mode: function(){ return mode; },
+    sim: function(){ return mode === 'menu' ? menuSim : sim; },
+    step: function(secs){
+      if (mode !== 'playing') return 0;
+      var n = Math.round(secs * 30), i;
+      for (i = 0; i < n && !sim.over; i++) Sim.step(sim, STEP);
+      drainEvents();
+      updateHud(true);                  // 与真实主循环一致：步进后刷新 HUD
+      if (sim.over) endGame();
+      return n;
+    },
+    sel: function(){ return selection; },
+  };
+}
+
+/* ===== 启动 ===== */
+menuSim = Sim.createGame({ mode: 'ambient', opponents: 3, castles: 11, diff: 'normal', ambient: true, seed: 20261006 });
+showMenu();
+renderHand();
+updateHud(true);
+requestAnimationFrame(function(t){ lastT = t; requestAnimationFrame(loop); });
+})();
+</script>
+</body>
+</html>

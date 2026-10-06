@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>墨战 · 产品原型图（project8）</title>
+<style>
+:root{
+  --paper:#f5f0e0; --paper2:#efe8d3; --ink:#2b2a26; --ink2:#57534a;
+  --cinnabar:#c0392b; --gold:#c9962e; --line:#b9b09a;
+  --dai:#2c5f6e; --zhe:#a86b3c; --lv:#4a6b52; --neutral:#8a8578;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+body{
+  background:var(--paper); color:var(--ink); min-height:100vh;
+  font-family:"STKaiti","KaiTi","楷体","Noto Serif SC",serif;
+  padding:18px 14px 60px;
+}
+body::before{content:"";position:fixed;inset:0;pointer-events:none;
+  background:radial-gradient(ellipse at 20% 10%,rgba(43,42,38,.05),transparent 55%),
+             radial-gradient(ellipse at 85% 90%,rgba(192,57,43,.04),transparent 50%);}
+header{text-align:center;margin-bottom:14px}
+header h1{font-size:30px;letter-spacing:14px;font-weight:700}
+header h1 span{color:var(--cinnabar)}
+header .sub{color:var(--ink2);font-size:13px;margin-top:4px;letter-spacing:3px}
+.rule{width:min(520px,80%);height:2px;margin:12px auto 0;
+  background:linear-gradient(90deg,transparent,var(--cinnabar),transparent)}
+nav{display:flex;flex-wrap:wrap;gap:8px;justify-content:center;margin:16px 0 22px}
+nav button{
+  font-family:inherit;font-size:15px;letter-spacing:2px;cursor:pointer;
+  padding:8px 18px;border:1.5px solid var(--ink2);background:transparent;color:var(--ink2);
+  border-radius:4px;transition:.18s;
+}
+nav button:hover{border-color:var(--cinnabar);color:var(--cinnabar)}
+nav button.on{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.screen{display:none;animation:fade .25s}
+.screen.on{display:block}
+@keyframes fade{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.stage{display:flex;flex-wrap:wrap;gap:26px;justify-content:center;align-items:flex-start}
+.frame{background:#fbf8ee;border:2px solid var(--ink);box-shadow:6px 6px 0 rgba(43,42,38,.16);
+  position:relative}
+.note{max-width:330px;font-size:14px;line-height:1.9;color:var(--ink2)}
+.note h3{color:var(--cinnabar);font-size:17px;letter-spacing:2px;margin-bottom:8px;
+  border-bottom:1px dashed var(--line);padding-bottom:6px}
+.note b{color:var(--ink)}
+.note .tag{display:inline-block;border:1px solid var(--cinnabar);color:var(--cinnabar);
+  font-size:12px;padding:1px 8px;border-radius:3px;margin:0 4px 4px 0}
+/* 印章 */
+.seal{display:inline-flex;align-items:center;justify-content:center;
+  width:52px;height:52px;border:3px solid var(--cinnabar);color:var(--cinnabar);
+  font-size:19px;letter-spacing:2px;border-radius:6px;transform:rotate(-6deg);
+  font-weight:700;line-height:1.1;text-align:center}
+/* ========== 主菜单 ========== */
+.menu{width:560px;max-width:94vw;padding:34px 34px 26px;text-align:center}
+.menu .logo{font-size:52px;letter-spacing:26px;text-indent:26px;font-weight:700}
+.menu .logo i{color:var(--cinnabar);font-style:normal}
+.menu .motto{color:var(--ink2);letter-spacing:5px;font-size:14px;margin:8px 0 24px}
+.panel{border:1.5px solid var(--ink2);padding:18px;margin-bottom:14px;text-align:left;position:relative}
+.panel .ptitle{font-size:19px;letter-spacing:6px;margin-bottom:12px}
+.optrow{display:flex;align-items:center;gap:8px;margin:9px 0;flex-wrap:wrap}
+.optrow .lab{font-size:14px;color:var(--ink2);width:52px;letter-spacing:2px}
+.opt{font-size:14px;border:1px solid var(--ink2);padding:4px 12px;border-radius:3px;color:var(--ink2)}
+.opt.sel{background:var(--ink);color:var(--paper);border-color:var(--ink)}
+.opt.lock{opacity:.38;text-decoration:line-through}
+.bigbtn{display:block;width:100%;margin-top:14px;padding:11px 0;font-size:20px;letter-spacing:12px;text-indent:12px;
+  background:var(--cinnabar);color:#fbf8ee;border:none;cursor:pointer;font-family:inherit;
+  box-shadow:3px 3px 0 rgba(43,42,38,.3)}
+.foot{display:flex;justify-content:space-between;color:var(--ink2);font-size:13px;margin-top:16px}
+.levels{display:flex;gap:7px;flex-wrap:wrap}
+.lvl{width:34px;height:34px;border:1.5px solid var(--ink2);display:flex;align-items:center;justify-content:center;
+  font-size:15px;color:var(--ink2)}
+.lvl.done{background:var(--lv);color:#fff;border-color:var(--lv)}
+.lvl.now{border-color:var(--cinnabar);color:var(--cinnabar);box-shadow:0 0 0 2px rgba(192,57,43,.25)}
+.lvl.lock{opacity:.35}
+/* ========== 对局桌面 ========== */
+.battle{width:760px;max-width:96vw}
+.hud{display:flex;align-items:center;gap:14px;background:var(--ink);color:#e8e2cf;
+  padding:7px 14px;font-size:14px;letter-spacing:1px}
+.hud .inkbar{width:120px;height:9px;border:1px solid #777;background:#111;position:relative}
+.hud .inkbar i{position:absolute;inset:1px;right:35%;background:linear-gradient(90deg,#3d3d3d,#c0392b)}
+.hud .sp{flex:1}
+.hud .pause{border:1px solid #888;padding:1px 9px;cursor:pointer}
+.map{position:relative;height:430px;background:
+  radial-gradient(ellipse at 30% 20%,rgba(43,42,38,.05),transparent 50%),
+  radial-gradient(ellipse at 78% 80%,rgba(44,95,110,.06),transparent 45%),var(--paper);
+  border-bottom:1.5px solid var(--ink);overflow:hidden}
+.mnt{position:absolute;opacity:.55;color:#c9c2ab;font-size:60px;user-select:none}
+/* 城池 */
+.castle{position:absolute;width:52px;height:52px;margin:-26px 0 0 -26px;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;color:#fff;font-size:15px;font-weight:700;
+  border:3px solid rgba(0,0,0,.22);box-shadow:0 0 0 5px rgba(43,42,38,.06)}
+.castle::before{content:"";position:absolute;inset:-9px;border-radius:50%;
+  border:1px dashed rgba(43,42,38,.35)}
+.castle.me{background:radial-gradient(circle at 35% 30%,#d4553f,#8e2a1d)}
+.castle.ai1{background:radial-gradient(circle at 35% 30%,#3d7d8f,#1d4551)}
+.castle.ai2{background:radial-gradient(circle at 35% 30%,#c08a52,#7a4c22)}
+.castle.neu{background:radial-gradient(circle at 35% 30%,#a09a8a,#6f6a5c)}
+.castle.sel{outline:3px solid var(--gold);outline-offset:3px}
+.castle.sel::after{content:"50%";position:absolute;top:-30px;left:50%;transform:translateX(-50%);
+  background:var(--gold);color:#fff;font-size:11px;padding:1px 7px;border-radius:3px}
+.castle .ring{position:absolute;inset:-16px;border-radius:50%;border:2px solid rgba(192,57,43,.55);
+  animation:pulse 1.4s infinite}
+@keyframes pulse{0%{transform:scale(.92);opacity:.9}70%{transform:scale(1.18);opacity:0}100%{opacity:0}}
+/* 阵列 */
+.camp{position:absolute;width:44px;height:44px;margin:-22px 0 0 -22px;transform:rotate(45deg);
+  border:2px dashed #b33327;background:rgba(192,57,43,.12)}
+.camp::after{content:"屯";position:absolute;inset:0;display:flex;align-items:center;justify-content:center;
+  transform:rotate(-45deg);color:#b33327;font-size:13px;font-weight:700}
+/* 行军部队 */
+.march{position:absolute;height:7px;display:flex;gap:6px;align-items:center}
+.march i{width:7px;height:7px;border-radius:50%;background:#8e2a1d;box-shadow:0 0 4px rgba(142,42,29,.7)}
+.march.enemy i{background:#1d4551}
+/* 框选 */
+.selbox{position:absolute;border:2px solid rgba(192,57,43,.85);background:rgba(192,57,43,.10)}
+/* 底部操作区 */
+.ctrl{display:flex;align-items:stretch;gap:12px;padding:12px 14px;background:#f1ead6}
+.ratio{display:flex;flex-direction:column;border:1.5px solid var(--ink2);overflow:hidden}
+.ratio b{flex:1;display:flex;align-items:center;justify-content:center;padding:0 13px;cursor:pointer;
+  font-size:14px;color:var(--ink2)}
+.ratio b.on{background:var(--ink);color:var(--paper)}
+.cards{display:flex;gap:12px;flex:1;justify-content:center}
+.card{width:86px;border:1.5px solid var(--ink);background:#fbf8ee;position:relative;cursor:pointer;
+  padding:9px 4px 7px;text-align:center;box-shadow:2px 3px 0 rgba(43,42,38,.18)}
+.card .cn{font-size:19px;letter-spacing:3px;font-weight:700}
+.card .ce{font-size:12px;color:var(--ink2);margin-top:3px}
+.card .cc{margin-top:5px;font-size:12px;color:#fbf8ee;background:var(--ink);display:inline-block;
+  padding:0 8px;border-radius:2px}
+.card.aim{outline:2.5px solid var(--cinnabar);outline-offset:2px}
+.hint{align-self:center;color:var(--ink2);font-size:13.5px;letter-spacing:1px;max-width:150px}
+.callout{position:absolute;font-size:12.5px;color:var(--cinnabar);background:#fbf8ee;
+  border:1px solid var(--cinnabar);padding:2px 8px;border-radius:3px;white-space:nowrap;z-index:5}
+.callout::before{content:"";position:absolute;width:34px;height:1.5px;background:var(--cinnabar)}
+/* ========== 手机竖屏 ========== */
+.phone{width:320px;border-radius:22px;border:2.5px solid var(--ink);overflow:hidden;
+  background:var(--paper);box-shadow:8px 8px 0 rgba(43,42,38,.16)}
+.phone .p-hud{background:var(--ink);color:#e8e2cf;font-size:12.5px;padding:7px 12px;
+  display:flex;gap:10px;align-items:center;letter-spacing:1px}
+.phone .p-map{position:relative;height:300px;border-bottom:1.5px solid var(--ink);
+  background:radial-gradient(ellipse at 30% 20%,rgba(43,42,38,.05),transparent 50%),var(--paper)}
+.phone .p-map .castle{width:42px;height:42px;margin:-21px 0 0 -21px;font-size:12.5px}
+.phone .p-ctrl{padding:10px 10px 14px}
+.phone .ratio b{padding:4px 11px}
+.phone .card{width:88px;padding:10px 4px}
+.phone .card .cn{font-size:20px}
+/* ========== 结算 ========== */
+.result{width:430px;max-width:92vw;padding:36px 30px 26px;text-align:center;position:relative}
+.result .stamp{width:120px;height:120px;margin:0 auto;border:5px solid;border-radius:10px;
+  display:flex;align-items:center;justify-content:center;flex-direction:column;transform:rotate(-8deg);
+  font-size:34px;letter-spacing:6px;text-indent:6px;font-weight:700;line-height:1.2}
+.result .stamp small{font-size:12px;letter-spacing:3px;margin-top:4px}
+.result .win{color:var(--cinnabar);border-color:var(--cinnabar)}
+.result .lose{color:#3a3a3a;border-color:#3a3a3a}
+.result h2{margin:18px 0 6px;font-size:22px;letter-spacing:5px}
+.result .stat{color:var(--ink2);font-size:14.5px;line-height:2;margin-bottom:18px}
+.btnrow{display:flex;gap:12px;justify-content:center}
+.btnrow .bb{padding:9px 22px;font-family:inherit;font-size:16px;letter-spacing:3px;cursor:pointer;
+  border:1.5px solid var(--ink)}
+.btnrow .bb.pri{background:var(--cinnabar);color:#fff;border-color:var(--cinnabar)}
+footer{text-align:center;color:var(--ink2);font-size:12.5px;margin-top:36px;letter-spacing:2px}
+@media (max-width:700px){
+  header h1{font-size:24px;letter-spacing:8px}
+  .battle{width:96vw}
+  .map{height:330px}
+  .hint{display:none}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>墨<span>·</span>战<span>·</span>原<span>·</span>型</h1>
+  <div class="sub">project8 · 水墨 State.io + 战术卡牌 · 线框原型 v1.0</div>
+  <div class="rule"></div>
+</header>
+
+<nav id="nav">
+  <button data-s="s1" class="on">① 主菜单</button>
+  <button data-s="s2">② 对局 · 桌面</button>
+  <button data-s="s3">③ 对局 · 手机竖屏</button>
+  <button data-s="s4">④ 卡牌瞄准态</button>
+  <button data-s="s5">⑤ 结算</button>
+</nav>
+
+<!-- ① 主菜单 -->
+<section class="screen on" id="s1">
+  <div class="stage">
+    <div class="frame menu">
+      <div class="seal" style="position:absolute;right:20px;top:20px">墨战</div>
+      <div class="logo">墨<i>·</i>战</div>
+      <div class="motto">—— 笔落惊风雨 · 一局定江山 ——</div>
+      <div class="panel">
+        <div class="ptitle">⚔ 快速对战</div>
+        <div class="optrow"><span class="lab">对手</span><span class="opt sel">1</span><span class="opt">2</span><span class="opt">3</span></div>
+        <div class="optrow"><span class="lab">地图</span><span class="opt sel">小·8城</span><span class="opt">中·11城</span><span class="opt">大·14城</span></div>
+        <div class="optrow"><span class="lab">难度</span><span class="opt">容易</span><span class="opt sel">普通</span><span class="opt">困难</span></div>
+        <button class="bigbtn">开 战 ！</button>
+      </div>
+      <div class="panel">
+        <div class="ptitle">卷 闯关 <small style="font-size:13px;color:var(--ink2)">进度 5 / 10</small></div>
+        <div class="levels">
+          <div class="lvl done">①</div><div class="lvl done">②</div><div class="lvl done">③</div>
+          <div class="lvl done">④</div><div class="lvl now">⑤</div><div class="lvl lock">⑥</div>
+          <div class="lvl lock">⑦</div><div class="lvl lock">⑧</div><div class="lvl lock">⑨</div><div class="lvl lock">⑩</div>
+        </div>
+      </div>
+      <div class="foot"><span>♪ 音效：开</span><span>最快胜利 3:21</span></div>
+    </div>
+    <div class="note">
+      <h3>① 主菜单 · 交互说明</h3>
+      <span class="tag">模式</span>快速对战可配置<span b>对手数 / 地图密度 / 难度</span>三参数；闯关模式展示 10 关进度，仅已解锁关可点。<br>
+      <span class="tag">印章</span>右上角朱砂印章为品牌元素，全局复用。<br>
+      <span class="tag">存档</span>底部展示音效开关与最快胜利用时（localStorage <b>ink.*</b>）。<br>
+      <span class="tag">布局</span>单列纵向布局，桌面与手机竖屏共用，无需两套。
+    </div>
+  </div>
+</section>
+
+<!-- ② 对局桌面 -->
+<section class="screen" id="s2">
+  <div class="stage">
+    <div class="frame battle">
+      <div class="hud">
+        <span>墨量</span><div class="inkbar"><i></i></div><span>6.5</span>
+        <span class="sp"></span>
+        <span>⏱ 2:14</span><span>我城 5</span><span>敌城 3</span>
+        <span class="pause">‖ 暂停</span>
+      </div>
+      <div class="map">
+        <div class="mnt" style="left:6%;bottom:2%">⛰</div>
+        <div class="mnt" style="right:10%;top:4%;font-size:44px">⛰</div>
+        <!-- 框选 -->
+        <div class="selbox" style="left:56px;top:60px;width:180px;height:120px"></div>
+        <!-- 城池 -->
+        <div class="castle me sel" style="left:110px;top:110px">18</div>
+        <div class="castle me sel" style="left:190px;top:95px">25</div>
+        <div class="castle me" style="left:300px;top:190px">40</div>
+        <div class="castle ai1" style="left:560px;top:120px">30</div>
+        <div class="castle ai2" style="left:640px;top:300px">22</div>
+        <div class="castle neu" style="left:470px;top:80px">12</div>
+        <div class="castle neu" style="left:120px;top:330px">20</div>
+        <div class="castle me" style="left:400px;top:330px;outline:3px solid var(--gold);outline-offset:3px"><span class="ring"></span>9</div>
+        <div class="camp" style="left:250px;top:290px"></div>
+        <!-- 行军 -->
+        <div class="march" style="left:215px;top:102px;width:120px"><i></i><i></i><i></i><i></i><i></i></div>
+        <div class="march enemy" style="left:470px;top:250px;width:150px;transform:rotate(30deg)"><i></i><i></i><i></i><i></i></div>
+        <!-- 标注 -->
+        <div class="callout" style="left:60px;top:30px">拖动框选（金边=选中）</div>
+        <div class="callout" style="left:330px;top:56px">行军墨点队列</div>
+        <div class="callout" style="left:352px;top:352px">阵列屯兵「屯」</div>
+        <div class="callout" style="left:415px;top:292px">占领晕染中</div>
+      </div>
+      <div class="ctrl">
+        <div class="ratio"><b class="on">50%</b><b>100%</b></div>
+        <div class="cards">
+          <div class="card"><div class="cn">火攻</div><div class="ce">烧毁敌城四成驻军</div><div class="cc">墨 5</div></div>
+          <div class="card"><div class="cn">护盾</div><div class="ce">8秒免疫来犯</div><div class="cc">墨 4</div></div>
+          <div class="card"><div class="cn">疾行</div><div class="ce">行军速度×2</div><div class="cc">墨 3</div></div>
+        </div>
+        <div class="hint">框选己方城池 →<br>点击目标派遣<br>点空地 = 列阵</div>
+      </div>
+    </div>
+    <div class="note">
+      <h3>② 对局 · 桌面横屏</h3>
+      <span class="tag">HUD</span>顶栏：墨量条 / 用时 / 双方城池数 / 暂停。<br>
+      <span class="tag">指挥</span>拖动框选己方城池（金色描边 + 比例角标），点击敌城/中立=进攻，点击己城=增援（可触发升级），点击空地=列阵屯兵。<br>
+      <span class="tag">比例</span>左下 50%/100% 切换派遣比例。<br>
+      <span class="tag">卡牌</span>底部 3 卡槽，显示卡名/一句话效果/墨量成本。<br>
+      <span class="tag">视认</span>朱砂=玩家，黛青/赭石=AI，墨灰=中立；虚线外圈=等级环，脉冲圈=占领晕染。
+    </div>
+  </div>
+</section>
+
+<!-- ③ 手机竖屏 -->
+<section class="screen" id="s3">
+  <div class="stage">
+    <div class="phone">
+      <div class="p-hud"><span>墨 6.5</span><span>⏱2:14</span><span style="flex:1"></span><span>我5</span><span>敌3</span><span>‖</span></div>
+      <div class="p-map">
+        <div class="castle me sel" style="left:90px;top:80px">18</div>
+        <div class="castle ai1" style="left:230px;top:70px">30</div>
+        <div class="castle neu" style="left:160px;top:150px">12</div>
+        <div class="castle me" style="left:70px;top:230px">40</div>
+        <div class="castle ai2" style="left:250px;top:215px">22</div>
+        <div class="march" style="left:120px;top:74px;width:70px"><i></i><i></i><i></i><i></i></div>
+        <div class="camp" style="left:150px;top:255px"></div>
+        <div class="callout" style="left:36px;top:16px">单指拖=框选</div>
+      </div>
+      <div class="p-ctrl">
+        <div style="display:flex;gap:10px;align-items:stretch">
+          <div class="ratio"><b class="on">50</b><b>100</b></div>
+          <div class="cards">
+            <div class="card"><div class="cn">火攻</div><div class="cc">墨 5</div></div>
+            <div class="card"><div class="cn">护盾</div><div class="cc">墨 4</div></div>
+            <div class="card"><div class="cn">疾行</div><div class="cc">墨 3</div></div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="note">
+      <h3>③ 对局 · 手机竖屏（375 宽基准）</h3>
+      <span class="tag">分层</span>地图占上部约 62%，卡牌栏固定底部加高（热区 ≥44px）。<br>
+      <span class="tag">HUD</span>压缩为单行：墨量 / 用时 / 兵力对比 / 暂停。<br>
+      <span class="tag">卡牌</span>竖屏下卡牌只显示卡名+成本，长按浮出效果说明。<br>
+      <span class="tag">防误触</span>canvas <b>touch-action:none</b>，框选不会引发页面滚动；比例按钮加大间距。
+    </div>
+  </div>
+</section>
+
+<!-- ④ 卡牌瞄准态 -->
+<section class="screen" id="s4">
+  <div class="stage">
+    <div class="frame battle">
+      <div class="hud">
+        <span>墨量</span><div class="inkbar"><i style="right:10%"></i></div><span>9.0</span>
+        <span class="sp"></span><span style="color:var(--gold)">◎ 发动「火攻」：选择一座敌方或中立城池</span>
+      </div>
+      <div class="map">
+        <div class="castle me" style="left:120px;top:130px">35</div>
+        <div class="castle me" style="left:250px;top:250px">22</div>
+        <div class="castle ai1" style="left:560px;top:120px"><span class="ring"></span>30</div>
+        <div class="castle ai2" style="left:640px;top:300px"><span class="ring"></span>22</div>
+        <div class="castle neu" style="left:470px;top:90px">12</div>
+        <div class="castle neu" style="left:130px;top:340px">20</div>
+        <div class="callout" style="left:400px;top:40px">合法目标脉冲高亮</div>
+        <div class="callout" style="left:80px;top:56px">己方城池置灰不可选</div>
+      </div>
+      <div class="ctrl">
+        <div class="ratio"><b class="on">50%</b><b style="opacity:.35">100%</b></div>
+        <div class="cards">
+          <div class="card aim"><div class="cn" style="color:var(--cinnabar)">火攻</div><div class="ce">瞄准中…</div><div class="cc">墨 5</div></div>
+          <div class="card" style="opacity:.55"><div class="cn">护盾</div><div class="ce">8秒免疫来犯</div><div class="cc">墨 4</div></div>
+          <div class="card" style="opacity:.55"><div class="cn">疾行</div><div class="ce">行军速度×2</div><div class="cc">墨 3</div></div>
+        </div>
+        <div class="hint">再点卡/点空白 = 取消</div>
+      </div>
+    </div>
+    <div class="note">
+      <h3>④ 卡牌瞄准态</h3>
+      <span class="tag">进入</span>点击卡牌且墨量充足 → 进入瞄准：其余卡变暗、比例按钮禁用、顶栏出现引导语。<br>
+      <span class="tag">目标</span>按卡面规则高亮合法城池（脉冲描边）；无目标卡（疾行/借刀/围魏救赵/墨涌）点击即发动。<br>
+      <span class="tag">取消</span>再点该卡、点空白、或按 ESC。<br>
+      <span class="tag">墨量不足</span>卡牌左右抖动 0.4s + 墨量条闪红，不进入瞄准。
+    </div>
+  </div>
+</section>
+
+<!-- ⑤ 结算 -->
+<section class="screen" id="s5">
+  <div class="stage">
+    <div class="frame result">
+      <div class="stamp win">胜<small>JIANGSHAN</small></div>
+      <h2>江山尽入吾墨</h2>
+      <div class="stat">用时 <b>3:21</b> · 占领 <b>7</b> 城 · 用卡 <b>4</b> 张<br>
+      <span style="color:var(--cinnabar)">闯关进度：第 5 关已通关，第 6 关解锁</span></div>
+      <div class="btnrow">
+        <button class="bb pri">再来一局</button>
+        <button class="bb">返回大厅</button>
+      </div>
+    </div>
+    <div class="frame result" style="margin-left:10px">
+      <div class="stamp lose">败<small>JUANTUZHONGlai</small></div>
+      <h2>卷土重来未可知</h2>
+      <div class="stat">存活 <b>2:47</b> · 占领 <b>3</b> 城 · 用卡 <b>2</b> 张<br>
+      <span style="color:var(--ink2)">失败原因：城池尽失（第 8 关可重复挑战）</span></div>
+      <div class="btnrow">
+        <button class="bb pri">再战此局</button>
+        <button class="bb">返回大厅</button>
+      </div>
+    </div>
+    <div class="note">
+      <h3>⑤ 结算 overlay</h3>
+      <span class="tag">印章</span>胜利盖朱砂「胜」印，失败盖玄墨「败」印，配一句水墨文案。<br>
+      <span class="tag">统计</span>用时 / 占领城数 / 用卡数；闯关模式额外展示解锁进度。<br>
+      <span class="tag">流转</span>再来一局（同配置重开）/ 返回大厅；overlay 复用同一 DOM，mode 驱动文案。
+    </div>
+  </div>
+</section>
+
+<footer>墨战 · project8 原型稿 · 需求文档见 docs/需求文档.md · 架构见 docs/架构设计.md</footer>
+
+<script>
+(function(){
+  'use strict';
+  var nav=document.getElementById('nav');
+  var screens=document.querySelectorAll('.screen');
+  nav.addEventListener('click',function(e){
+    var btn=e.target.closest('button'); if(!btn) return;
+    nav.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b===btn);});
+    screens.forEach(function(s){s.classList.toggle('on',s.id===btn.dataset.s);});
+  });
+})();
+</script>
+</body>
+</html>
