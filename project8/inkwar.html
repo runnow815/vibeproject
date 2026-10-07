@@ -758,10 +758,13 @@ function step(sim, dt){
     var p = sim.camps[i];
     p.decayAcc += dt;
     if (p.decayAcc >= CFG.CAMP_DECAY){
-      if (p.count > 1) p.count--;
+      if (p.count > 0) p.count--;
       p.decayAcc -= CFG.CAMP_DECAY;
     }
   }
+  /* 4.5 空阵列清场：兵派走/散尽后「屯」图消失（id 与下标保持一致） */
+  sim.camps = sim.camps.filter(function(x){ return x.count >= 1; });
+  for (i = 0; i < sim.camps.length; i++) sim.camps[i].id = i;
   /* 5 计时器 */
   for (i = 0; i < sim.castles.length; i++){
     c = sim.castles[i];
@@ -817,7 +820,7 @@ if (typeof module !== 'undefined' && module.exports) module.exports = InkSim;
 (function(){
 'use strict';
 var Sim = window.InkSim;
-var CFG = Sim.CFG, CARDS = Sim.CARDS, CARD_BY_KEY = {};
+var CFG = Sim.CFG, LEVELS = Sim.LEVELS, CARDS = Sim.CARDS, CARD_BY_KEY = {};
 CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
 var dist = Sim.dist;   // 几何工具（逻辑块同源）
 
@@ -894,7 +897,7 @@ function castleColor(o){
   return o === 1 ? ['#d4553f', '#8e2a1d'] : o === 2 ? ['#3d7d8f', '#1d4551'] :
          o === 3 ? ['#c08a52', '#7a4c22'] : o === 4 ? ['#5d8a5e', '#2f5230'] : ['#a09a8a', '#6f6a5c'];
 }
-function castleR(c){ return 26 + (c.level - 1) * 6; }
+function castleR(c){ return 24 + (c.level - 1) * 10; }   // 等级一/二/三级大小 24/34/44
 
 /* ===== 背景离屏预渲染（宣纸 + 远山 + 印章） ===== */
 var bg = document.createElement('canvas'); bg.width = CFG.MAP_W; bg.height = CFG.MAP_H;
@@ -1456,12 +1459,30 @@ function drawCastle(c, selected, aimingValid, tGlobal){
     ctx.fillStyle = 'rgba(90,60,110,.9)'; ctx.textAlign = 'center';
     ctx.fillText('弱', c.x, c.y - r - 16);
   }
+  /* 驻军字兵环绕城池：有多少驻军画多少字，环形排布受容量封顶，整体慢旋 */
+  var garrisonN = Math.min(Math.floor(c.garrison), LEVELS[c.level - 1].cap);
+  if (garrisonN > 0){
+    var ringR = r + 13, onRing = 0, ringCap = Math.floor(Math.PI * 2 * ringR / 12.5);
+    ctx.font = '10px "STKaiti","KaiTi","楷体",serif';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = col[1];
+    var spin = tGlobal * 0.12;
+    for (var gi = 0; gi < garrisonN; gi++){
+      if (onRing >= ringCap){ ringR += 13; ringCap = Math.floor(Math.PI * 2 * ringR / 12.5); onRing = 0; }
+      var ang = spin + (onRing / ringCap) * Math.PI * 2;
+      ctx.fillText('兵', c.x + Math.cos(ang) * ringR, c.y + Math.sin(ang) * ringR);
+      onRing++;
+    }
+  }
   ctx.font = 'bold 20px "STKaiti","KaiTi","楷体",serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(30,26,20,.55)';
   var txt = String(Math.floor(c.garrison));
   ctx.strokeText(txt, c.x, c.y + 1);
   ctx.fillStyle = '#f7f2e3'; ctx.fillText(txt, c.x, c.y + 1);
+  ctx.font = '11px "STKaiti","KaiTi","楷体",serif';          // 人口上限
+  ctx.fillStyle = 'rgba(245,240,224,.78)';
+  ctx.fillText('/' + LEVELS[c.level - 1].cap, c.x, c.y + 14);
   if (selected){
     ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 3.5;
     ctx.beginPath(); ctx.arc(c.x, c.y, r + 14, 0, 7); ctx.stroke();
@@ -1500,19 +1521,24 @@ function drawArmy(a, tGlobal, selected){
   var storm = a.tKind === 'c' && sim.castles[a.tid] && sim.castles[a.tid].owner !== a.owner;
   var atk = a.atkT > 0 ? Math.sin(tGlobal * 30) * 3.4 : 0;          // 遭遇突刺
   var lunge = storm ? Math.max(0, Math.sin(tGlobal * 8)) * 2.6 : 0; // 攻城推进
-  var fs = 12 + Math.min(10, a.count / 7);                // 字号随兵力
-  var gap = fs + 2;
-  var n = Math.min(6, Math.max(2, Math.round(a.count / 6)));
+  /* 全量字兵方阵：有多少兵画多少个「兵」字（紧凑多列，头部为前锋） */
+  var total = Math.max(1, Math.round(a.count));
+  var cols = Math.min(8, Math.max(1, Math.ceil(Math.sqrt(total * 1.4))));
+  var fs = 13 - Math.min(4.5, total / 30);
+  var gapx = fs * 0.92, gapy = fs * 0.95;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  for (var i = n - 1; i >= 0; i--){
-    var side = (i % 2 ? 4.5 : -4.5) * (i ? 1 : 0);        // 两列行军
-    var gx = a.x - ux * i * gap - uy * side;
-    var gy = a.y - uy * i * gap + ux * side;
-    var push = i === 0 ? atk + lunge : Math.max(0, atk - i) * 0.6;
-    ctx.font = 'bold ' + fs.toFixed(1) + 'px "STKaiti","KaiTi","楷体",serif';
-    ctx.lineWidth = 3; ctx.strokeStyle = 'rgba(245,240,224,.85)';
-    ctx.strokeText('兵', gx + ux * push, gy + uy * push);
-    ctx.fillStyle = col[1];
+  ctx.font = 'bold ' + fs.toFixed(1) + 'px "STKaiti","KaiTi","楷体",serif';
+  var outline = fs > 10.5;
+  if (outline){ ctx.lineWidth = 2.6; ctx.strokeStyle = 'rgba(245,240,224,.85)'; }
+  ctx.fillStyle = col[1];
+  for (var k = total - 1; k >= 0; k--){
+    var row = Math.floor(k / cols), cIdx = k % cols;
+    var side = (cIdx - (cols - 1) / 2) * gapx;
+    var back = row * gapy;
+    var push = k === 0 ? atk + lunge : Math.max(0, atk - row) * 0.5;
+    var gx = a.x - ux * back - uy * side;
+    var gy = a.y - uy * back + ux * side;
+    if (outline) ctx.strokeText('兵', gx + ux * push, gy + uy * push);
     ctx.fillText('兵', gx + ux * push, gy + uy * push);
   }
   if (storm || a.atkT > 0){                               // 挥砍弧

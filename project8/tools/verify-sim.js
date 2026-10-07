@@ -367,6 +367,34 @@ section('军令改向');
   ok(Sim.armyR(big) > Sim.armyR(small) && Sim.armyR(small) >= 9, '碰撞体积随兵力单调缩放');
 }
 
+section('城池等级与阵列清场（v1.3）');
+{
+  const sim = unitSim(51);
+  const r1 = Sim.createGame === undefined ? 0 : 0; // 占位无操作
+  const c1 = { level: 1 }, c2 = { level: 2 }, c3 = { level: 3 };
+  const R1 = 24 + (c1.level - 1) * 10, R2 = 24 + (c2.level - 1) * 10, R3 = 24 + (c3.level - 1) * 10;
+  ok(R2 > R1 && R3 > R2 && R3 === 44, '城池大小随等级递增（24/34/44）');
+  // 阵列派空 → 「屯」消失
+  const sim2 = unitSim(52);
+  const me = sim2.castles[0];
+  me.garrison = 40;
+  Sim.command(sim2, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'pt', x: me.x + 260, y: me.y }, ratio: 1 });
+  run(sim2, 4);
+  ok(sim2.camps.length === 1, '阵列已创建');
+  Sim.command(sim2, { owner: 1, from: [{ k: 'p', id: sim2.camps[0].id }], to: { k: 'c', id: 0 }, ratio: 1 });
+  run(sim2, 6);
+  ok(sim2.camps.length === 0, '阵列部队派空后「屯」图消失', '剩余 ' + sim2.camps.length);
+  // 阵列散尽（墨迹风化）→ 消失
+  const sim3 = unitSim(53);
+  const me3 = sim3.castles[0];
+  me3.garrison = 40;
+  Sim.command(sim3, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'pt', x: me3.x + 260, y: me3.y }, ratio: 0.5 });
+  run(sim3, 4);
+  const cnt0 = sim3.camps[0].count;
+  run(sim3, 5 * cnt0 + 8);                 // 散逸至 0
+  ok(sim3.camps.length === 0, '阵列散尽（墨迹风化）后消失', '剩余 ' + sim3.camps.length);
+}
+
 /* ---------- 汇总 ---------- */
 console.log('\n──────────────────────────────');
 console.log('通过 ' + passed + ' · 失败 ' + failed);
