@@ -335,6 +335,38 @@ section('双玩家支持');
   ok(sim.over === 2, 'PvP 语义：1 号灭 → over=2（2 号胜）', 'over=' + sim.over);
 }
 
+/* ============================================================
+ * 9. 军令改向：在途部队可变更目标
+ * ============================================================ */
+section('军令改向');
+{
+  const sim = unitSim(41);
+  const me = sim.castles[0];
+  me.garrison = 60;
+  const tgtA = addCastle(sim, 0, me.x + 240, me.y, 1, 40);      // 原目标（中立）
+  const tgtB = addCastle(sim, 2, me.x + 600, me.y + 300, 1, 5); // 新目标（弱守敌城）
+  Sim.command(sim, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'c', id: tgtA.id }, ratio: 1 });
+  Sim.step(sim, DT);
+  ok(sim.armies.length === 1 && sim.armies[0].tid === tgtA.id, '部队出发，初始指向 tgtA');
+  const a = sim.armies[0];
+  Sim.command(sim, { type: 'retarget', owner: 1, ids: [a.id], to: { k: 'c', id: tgtB.id } });
+  Sim.step(sim, DT);
+  ok(a.tx === tgtB.x && a.tid === tgtB.id, '军令改向生效（目标切到 tgtB）');
+  run(sim, 12);
+  ok(tgtA.owner === 0, '原目标未被攻击', 'owner=' + tgtA.owner);
+  ok(tgtB.owner === 1, '部队沿新方向抵达并占领 tgtB', 'owner=' + tgtB.owner);
+  // 越权改向拒绝
+  Sim.command(sim, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'pt', x: me.x + 100, y: me.y }, ratio: 1 });
+  Sim.step(sim, DT);
+  const a2 = sim.armies[sim.armies.length - 1];
+  Sim.command(sim, { type: 'retarget', owner: 2, ids: [a2.id], to: { k: 'pt', x: 100, y: 100 } });
+  Sim.step(sim, DT);
+  ok(a2.tx !== 100, '越权改向被拒绝（非本方部队）');
+  // 体积随兵力缩放
+  const big = { count: 60 }, small = { count: 5 };
+  ok(Sim.armyR(big) > Sim.armyR(small) && Sim.armyR(small) >= 9, '碰撞体积随兵力单调缩放');
+}
+
 /* ---------- 汇总 ---------- */
 console.log('\n──────────────────────────────');
 console.log('通过 ' + passed + ' · 失败 ' + failed);
