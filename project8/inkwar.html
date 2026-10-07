@@ -126,6 +126,10 @@ button{font-family:inherit;cursor:pointer}
 .btnrow{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
 .bb{padding:9px 24px;font-size:16px;letter-spacing:3px;border-radius:4px;border:1.5px solid var(--ink);background:transparent;color:var(--ink)}
 .bb.pri{background:var(--cinnabar);color:#fbf6e9;border-color:var(--cinnabar)}
+.lootrow{display:flex;gap:10px;justify-content:center;margin:8px 0 4px}
+.card.loot{width:31%;min-width:88px}
+.packrow{font-size:13.5px;color:var(--ink2);margin:5px 0;letter-spacing:1px}
+.packrow small{font-size:11px;color:var(--gold);margin-left:4px}
 .codebox{
   width:100%;height:58px;font-size:11px;line-height:1.4;color:var(--ink2);resize:none;
   border:1px dashed var(--ink2);border-radius:4px;background:#fbf6e9;padding:5px 7px;
@@ -255,6 +259,18 @@ var CARDS = [
 var CARD_BY_KEY = {};
 CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
 
+/* 日卡：当日有效（跨局被动增益，跨天清空），仅通过结算三选一获得 */
+var DAILIES = [
+  { key: 'farming', name: '屯田', desc: '产速 +15%',          mod: { prod: 1.15 } },
+  { key: 'spring',  name: '墨泉', desc: '墨量回复 +50%',      mod: { inkRegen: 1.5 } },
+  { key: 'wall',    name: '铁壁', desc: '城池容量 +20%',      mod: { cap: 1.2 } },
+  { key: 'march',   name: '急行', desc: '行军速度 +15%',      mod: { speed: 1.15 } },
+  { key: 'well',    name: '墨海', desc: '墨量上限 +2',        mod: { inkMax: 2 } },
+];
+
+var DAILY_BY_KEY = {};
+DAILIES.forEach(function(d){ DAILY_BY_KEY[d.key] = d; });
+
 var CAMPAIGN = [
   { name: '初出茅庐', castles: 8,  opponents: 1, diff: 'easy',   bonus: 0  },
   { name: '小试锋芒', castles: 9,  opponents: 1, diff: 'easy',   bonus: 0  },
@@ -339,8 +355,23 @@ function createGame(opts){
     opts: opts, rngSeed: seed, rng: mulberry32(seed),
     _aid: 1,
   };
+  /* 日卡被动：当日持有的日卡折算成本局全局修正 */
+  sim.mods = { prod: 1, inkRegen: 1, cap: 1, speed: 1, inkMaxDelta: 0 };
+  (opts.dailies || []).forEach(function(key){
+    var d = DAILY_BY_KEY[key];
+    if (d) for (var k in d.mod) sim.mods[k] = (k === 'inkMaxDelta') ? d.mod[k] : sim.mods[k] * d.mod[k];
+  });
+  sim.inkMax = CFG.INK_MAX + sim.mods.inkMaxDelta;
+
   mapGen(sim, opts);
-  for (var i = 0; i < 3; i++){ sim.hands[1].push(drawCard(sim)); sim.hands[2].push(drawCard(sim)); }
+  /* 手牌：次卡「下局来用」——上一局选中的次卡作为开局手牌注入，余位随机补足 */
+  function fillHand(owner, startCards){
+    var hand = (startCards || []).slice(0, 3);
+    while (hand.length < 3) hand.push(drawCard(sim));
+    sim.hands[owner] = hand;
+  }
+  fillHand(1, opts.startHand);
+  fillHand(2, opts.guestHand);
   sim.hand = sim.hands[1];           // 兼容别名：1 号玩家手牌
   return sim;
 }
@@ -424,7 +455,7 @@ function resolveArrival(sim, a){
   var c = sim.castles[a.tid]; if (!c) return;
   if (c.owner === a.owner){
     var L = LEVELS[c.level - 1];
-    c.garrison = Math.min(L.cap, c.garrison + a.count);
+    c.garrison = Math.min(Math.round(L.cap * sim.mods.cap), c.garrison + a.count);
     if (c.level < 3 && c.garrison >= LEVELS[c.level - 1].up){
       c.garrison -= LEVELS[c.level - 1].up;
       c.level++;
@@ -435,7 +466,7 @@ function resolveArrival(sim, a){
     if (a.count > c.garrison){
       var from = c.owner;
       c.owner = a.owner;
-      c.garrison = Math.min(LEVELS[c.level - 1].cap, a.count - c.garrison);
+      c.garrison = Math.min(Math.round(LEVELS[c.level - 1].cap * sim.mods.cap), a.count - c.garrison);
       c.flashT = 0.6;
       sim.ink[a.owner] = Math.min(CFG.INK_MAX, sim.ink[a.owner] + (from === 0 ? CFG.CAPTURE_INK.neutral : CFG.CAPTURE_INK.enemy));
       if (a.owner === 1) sim.stats.capturedBy[1]++;
@@ -471,7 +502,7 @@ function applyCard(sim, key, owner, targetId){
       break;
     case 'reinforce':
       c = sim.castles[targetId];
-      if (c) c.garrison = Math.min(LEVELS[c.level - 1].cap, c.garrison + CFG.REINFORCE_N);
+      if (c) c.garrison = Math.min(Math.round(LEVELS[c.level - 1].cap * sim.mods.cap), c.garrison + CFG.REINFORCE_N);
       break;
     case 'weak':
       c = sim.castles[targetId]; if (c) c.weakT = CFG.WEAK_T;
@@ -512,7 +543,7 @@ function applyCard(sim, key, owner, targetId){
     case 'surge':
       for (i = 0; i < sim.castles.length; i++){
         c = sim.castles[i];
-        if (c.owner === owner) c.garrison = Math.min(LEVELS[c.level - 1].cap, c.garrison + CFG.SURGE_N);
+        if (c.owner === owner) c.garrison = Math.min(Math.round(LEVELS[c.level - 1].cap * sim.mods.cap), c.garrison + CFG.SURGE_N);
       }
       break;
     case 'defect':
@@ -750,12 +781,12 @@ function step(sim, dt){
     c = sim.castles[i];
     if (c.owner === 0) continue;
     var L = LEVELS[c.level - 1];
-    c.garrison = Math.min(L.cap, c.garrison + L.rate * (c.weakT > 0 ? 0.5 : 1) * (c.buffT > 0 ? 3 : 1) * dt);
+    c.garrison = Math.min(Math.round(L.cap * sim.mods.cap), c.garrison + L.rate * sim.mods.prod * (c.weakT > 0 ? 0.5 : 1) * (c.buffT > 0 ? 3 : 1) * dt);
   }
   /* 3 部队推进与抵达 */
   for (i = sim.armies.length - 1; i >= 0; i--){
     var a = sim.armies[i];
-    var sp = CFG.SPEED * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1);
+    var sp = CFG.SPEED * sim.mods.speed * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1);
     var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy);
     var mv = sp * dt;
     if (d <= mv){
@@ -810,7 +841,7 @@ function step(sim, dt){
   for (o = 1; o <= 4; o++) if (sim.aiCardCd[o] > 0) sim.aiCardCd[o] -= dt;
 
   /* 6 墨量回复 */
-  for (o = 1; o <= 4; o++) sim.ink[o] = Math.min(CFG.INK_MAX, sim.ink[o] + CFG.INK_REGEN * dt);
+  for (o = 1; o <= 4; o++) sim.ink[o] = Math.min(sim.inkMax, sim.ink[o] + CFG.INK_REGEN * sim.mods.inkRegen * dt);
 
   /* 7 AI 决策（noAI 为单测/教学钩子：只跑玩家，不出手） */
   if (!sim.opts.noAI){
@@ -841,7 +872,7 @@ function step(sim, dt){
 /* ---------- 导出 ---------- */
 var InkSim = { CFG: CFG, LEVELS: LEVELS, DIFF: DIFF, CARDS: CARDS, CAMPAIGN: CAMPAIGN,
                createGame: createGame, command: command, cardPlay: cardPlay, canPlay: canPlay,
-               validTarget: validTarget, step: step, aiTick: aiTick, dist: dist, armyR: armyR };
+               validTarget: validTarget, step: step, aiTick: aiTick, dist: dist, armyR: armyR, DAILIES: DAILIES };
 if (typeof window !== 'undefined') window.InkSim = InkSim;
 if (typeof module !== 'undefined' && module.exports) module.exports = InkSim;
 })();
@@ -875,6 +906,14 @@ var best = loadNum('ink.best', 0);                // 最快胜利秒数
 var soundOn = loadNum('ink.sound', 1) === 1;
 var lastCfg = loadJSON('ink.cfg', { opponents: 1, size: 11, diff: 'normal' });
 var record = loadJSON('ink.stats', { w: 0, l: 0, streak: 0 });   // 战绩：胜/负/连胜
+function todayStr(){ var d = new Date(); return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate(); }
+var pending = loadJSON('ink.pending', []);                       // 次卡包：下局开局手牌（≤3）
+var daily = (function(){                                          // 日卡包：当日有效，跨天清空
+  var d = loadJSON('ink.daily', null);
+  if (!d || d.date !== todayStr() || !d.cards) d = { date: todayStr(), cards: [] };
+  return d;
+})();
+function savePacks(){ save('ink.pending', JSON.stringify(pending)); save('ink.daily', JSON.stringify(daily)); }
 
 /* ===== 音效（WebAudio 合成） ===== */
 var Sound = {
@@ -996,6 +1035,15 @@ function showMenu(){
       '<div class="lvlgrid">' + lvls + '</div>' +
     '</div>' +
     '<div class="pbox">' +
+      '<div class="ptitle">🎒 卡包 <small>对局结算三选一获得</small></div>' +
+      '<div class="packrow">📜 今日日卡：' +
+        (daily.cards.length ? daily.cards.map(function(k){ var d = Sim.DAILIES.find(function(x){ return x.key === k; }); return d ? d.name : k; }).join('、') : '无') +
+        ' <small>当日对局生效</small></div>' +
+      '<div class="packrow">🎴 下局次卡：' +
+        (pending.length ? pending.map(function(k){ var c = CARD_BY_KEY[k]; return c ? c.name : k; }).join('、') : '无') +
+        ' <small>下局开局手牌</small></div>' +
+    '</div>' +
+    '<div class="pbox">' +
       '<div class="ptitle">👥 好友对战 <small>1v1 · WebRTC 直连</small></div>' +
       '<div class="btnrow" style="margin-bottom:8px">' +
         '<button class="bb pri" id="btnHost">创建房间</button>' +
@@ -1067,22 +1115,66 @@ function showResult(){
   } else if (sim.opts.mode === 'pvp'){
     campMsg = '<br><span>好' + (win ? '友对战 · 技高一筹' : '友对战 · 胜败乃兵家常事') + '</span>';
   }
+  var loot = rollLoot(win);
   showOverlay(
     '<div class="stamp ' + (win ? 'win">胜<small>JIANGSHAN</small>' : 'lose">败<small>ZHENGUO</small>') + '</div>' +
     '<h1 style="font-size:24px;letter-spacing:8px;text-indent:8px">' + (win ? '江山尽入吾墨' : '卷土重来未可知') + '</h1>' +
     '<div class="rstat">用时 <b>' + fmt(sim.t) + '</b> · 占领 <b>' + (sim.stats.capturedBy[mySide] || 0) + '</b> 城 · 用卡 <b>' + sim.stats.cardsUsed + '</b> 张<br>生涯战绩 ' + record.w + '胜' + record.l + '负' + campMsg + '</div>' +
+    '<div class="ptitle" style="margin-top:12px">🎁 战利品 · 三选一 <small>日卡当日有效 · 次卡下局可用</small></div>' +
+    '<div class="lootrow">' + loot.map(function(l, i){
+      return '<button class="card loot" data-i="' + i + '">' +
+        '<div class="cn">' + l.name + '</div><div class="cd">' + l.desc + '</div>' +
+        '<div class="cc" style="' + (l.kind === 'daily' ? 'background:var(--lv)' : '') + '">' + (l.kind === 'daily' ? '日卡' : '次卡·下局') + '</div></button>';
+    }).join('') + '</div>' +
+    '<div id="lootMsg" class="rstat" style="margin:2px 0 10px">选择一张收入卡包，或' +
+      '<button class="tbtn" id="btnSkip" style="padding:2px 10px;margin:0 4px">跳过</button></div>' +
     '<div class="btnrow">' +
       '<button class="bb pri" id="btnAgain">' + (win ? '再来一局' : '再战此局') + '</button>' +
       '<button class="bb" id="btnMenu2">返回菜单</button>' +
     '</div>'
   );
+  elPanel.querySelectorAll('.card.loot').forEach(function(b){
+    b.onclick = function(){
+      var l = loot[+b.dataset.i];
+      if (l.kind === 'daily'){ daily.cards.push(l.key); savePacks(); document.getElementById('lootMsg').textContent = '「' + l.name + '」已收入今日日卡包'; }
+      else {
+        if (pending.length >= 3) pending.shift();    // 下局卡组上限 3，满则最早的被替换
+        pending.push(l.key); savePacks();
+        document.getElementById('lootMsg').textContent = '「' + l.name + '」已收入下局次卡包';
+      }
+      elPanel.querySelectorAll('.card.loot').forEach(function(x){ x.disabled = true; x.style.opacity = x === b ? 1 : 0.35; });
+    };
+  });
+  document.getElementById('btnSkip').onclick = function(){
+    document.getElementById('lootMsg').textContent = '已跳过本次战利品';
+    elPanel.querySelectorAll('.card.loot').forEach(function(x){ x.disabled = true; x.style.opacity = 0.35; });
+  };
   document.getElementById('btnAgain').onclick = restart;
   document.getElementById('btnMenu2').onclick = backToMenu;
+}
+/* 结算掉落：每局固定三选一；胜利提高日卡概率（日卡概率低、次卡高概率） */
+function rollLoot(won){
+  function rollNext(){
+    var c = Sim.CARDS[Math.floor(Math.random() * Sim.CARDS.length)];
+    return { kind: 'next', key: c.key, name: c.name, desc: c.desc };
+  }
+  var out = [];
+  for (var i = 0; i < 3; i++){
+    if (Math.random() < (won ? 0.3 : 0.15)){
+      var pool = Sim.DAILIES.filter(function(d){ return daily.cards.indexOf(d.key) < 0; });
+      out.push(pool.length ? (function(){ var d = pool[Math.floor(Math.random() * pool.length)]; return { kind: 'daily', key: d.key, name: d.name, desc: d.desc }; })() : rollNext());
+    } else out.push(rollNext());
+  }
+  return out;
 }
 
 /* ===== 流程：开局 / 暂停 / 结束 ===== */
 function startGame(opts){
   mySide = opts.self || 1;
+  opts.startHand = (opts.startHand || pending).slice(0, 3);
+  opts.dailies = netRole === 'none' ? (daily.cards || []) : [];   // 联机对局日卡被动不生效（公平）
+  pending = [];
+  savePacks();
   sim = Sim.createGame(opts);
   selection = []; aim = null; floats = []; fxs = []; boxRect = null; dragArrow = null;
   acc = 0;
@@ -1405,7 +1497,7 @@ window.addEventListener('keydown', function(e){
 /* ===== HUD ===== */
 function updateHud(force){
   if (!sim) return;
-  elInkfill.style.width = (sim.ink[mySide] / CFG.INK_MAX * 100) + '%';
+  elInkfill.style.width = (sim.ink[mySide] / (sim.inkMax || CFG.INK_MAX) * 100) + '%';
   elInkval.textContent = (Math.floor(sim.ink[mySide] * 10) / 10).toFixed(1);
   elTime.textContent = fmt(sim.t);
   var my = 0, foe = 0;
@@ -1786,6 +1878,7 @@ var Net = {
       document.getElementById('acceptAns').onclick = async function(){
         try {
           var desc = JSON.parse(extractCode(document.getElementById('ansIn').value, 'accept'));
+          net.guestHand = desc.hand || null;             // 客机次卡手牌
           await net.pc.setRemoteDescription(new RTCSessionDescription(desc));
           document.getElementById('pvpStat').textContent = '连接中…';
         } catch (e){ document.getElementById('pvpStat').textContent = '应答码无效'; }
@@ -1812,7 +1905,10 @@ var Net = {
         var ans = await net.pc.createAnswer();
         await net.pc.setLocalDescription(ans);
         await gatherIce(net.pc);
-        var code = b64e(JSON.stringify(net.pc.localDescription));
+        var desc = net.pc.localDescription.toJSON ? net.pc.localDescription.toJSON() : JSON.parse(JSON.stringify(net.pc.localDescription));
+        desc.hand = pending.slice(0, 3);                 // 次卡随应答码交付主机
+        pending = []; savePacks();
+        var code = b64e(JSON.stringify(desc));
         var url = inviteUrl('accept', code);
         pvpStatus(
           '<div class="rstat">② 把<b>应答链接</b>发回给房主，等 TA 完成连接：</div>' +
@@ -1852,7 +1948,8 @@ var Net = {
   },
   hostRestart: function(){
     if (this.role !== 'host') return;
-    var opts = { mode: 'pvp', opponents: 1, castles: cfg.size, diff: 'normal', noAI: true, self: 1, seed: (Math.random() * 1e9) | 0 };
+    var opts = { mode: 'pvp', opponents: 1, castles: cfg.size, diff: 'normal', noAI: true, self: 1, seed: (Math.random() * 1e9) | 0, guestHand: this.guestHand || null };
+    this.guestHand = null;
     startGame(opts);
     netEvts = [];
     this.send({ t: 'start', seed: opts.seed, size: opts.castles });

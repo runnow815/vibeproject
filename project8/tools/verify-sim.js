@@ -437,6 +437,29 @@ section('中立不产兵与新增卡牌（v1.4）');
   ok(Sim.CARDS.length === 10, '卡池 10 张', '实际 ' + Sim.CARDS.length);
 }
 
+section('日卡被动与次卡带入（v1.5）');
+{
+  // 屯田（产速+15%）+ 铁壁（容量+20%）被动生效
+  const sim = Sim.createGame({ opponents: 1, castles: 8, diff: 'easy', seed: 71, noAI: true,
+                               dailies: ['farming', 'wall'] });
+  ok(sim.mods.prod === 1.15 && sim.mods.cap === 1.2, '日卡被动折算为全局修正');
+  const me = sim.castles[0]; me.garrison = 0;
+  run(sim, 4);
+  ok(Math.abs(me.garrison - 0.7 * 1.15 * 4) < 0.01, '产速 ×1.15（4s: ' + me.garrison.toFixed(2) + '）');
+  // 次卡「下局来用」：开局手牌注入
+  const sim2 = Sim.createGame({ opponents: 1, castles: 8, diff: 'easy', seed: 72, noAI: true,
+                                startHand: ['fire', 'shield'] });
+  ok(sim2.hands[1][0] === 'fire' && sim2.hands[1][1] === 'shield' && sim2.hands[1].length === 3,
+     '下局次卡作为开局手牌注入（不足 3 张自动补足）');
+  ok(sim2.hands[2].length === 3 && sim2.hands[2][0] !== 'fire', '对手手牌不受注入影响');
+  // 联机双端各自带入：host startHand + guestHand
+  const sim3 = Sim.createGame({ opponents: 1, castles: 8, diff: 'easy', seed: 73, noAI: true,
+                                startHand: ['rush'], guestHand: ['defect'] });
+  ok(sim3.hands[1][0] === 'rush' && sim3.hands[2][0] === 'defect', '联机双方各自注入次卡');
+  // 日卡不进普通摸牌池
+  ok(Sim.CARDS.every(c => !Sim.DAILIES.some(d => d.key === c.key)), '日卡与次卡池隔离（摸牌不出日卡）');
+}
+
 /* ---------- 汇总 ---------- */
 console.log('\n──────────────────────────────');
 console.log('通过 ' + passed + ' · 失败 ' + failed);
