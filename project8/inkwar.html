@@ -221,7 +221,7 @@ var CFG = {
   INK_MAX: 10, INK_START: 3, INK_REGEN: 0.25,
   CAPTURE_INK: { enemy: 2, neutral: 1 },
   CAMP_DECAY: 5,         // 阵列每 5 秒散逸 1 兵
-  SHIELD_T: 8, WEAK_T: 10, RUSH_T: 10,
+  SHIELD_T: 8, WEAK_T: 10, RUSH_T: 10, HOLDFAST_T: 8,
   ARMY_CAP: 300,         // 部队实体上限（非功能需求 N4）
   REINFORCE_N: 25, SURGE_N: 8, FIRE_KILL: 0.4,
 };
@@ -236,7 +236,7 @@ var LEVELS = [
 var DIFF = {
   easy:   { interval: 2.2, mistake: 0.40, ratio: 0.5, atkRatio: 1.0, buffer: 0.85, minPool: 12, card: false },
   normal: { interval: 1.4, mistake: 0.15, ratio: 0.6, atkRatio: 0.9, buffer: 0.95, minPool: 10, card: false },
-  hard:   { interval: 0.8, mistake: 0.05, ratio: 0.7, atkRatio: 0.9, buffer: 1.0,  minPool: 8,  card: true  },
+  hard:   { interval: 0.7, mistake: 0.05, ratio: 0.85, atkRatio: 0.9, buffer: 0.9, minPool: 8, card: true },
 };
 
 /* target: 'foe'=敌/中立 'enemy'=仅敌方 'own'=己方 null=无需目标 */
@@ -249,6 +249,8 @@ var CARDS = [
   { key: 'dagger',    name: '借刀',     desc: '最近中立城倒戈',     cost: 6, target: null },
   { key: 'divert',    name: '围魏救赵', desc: '召回敌方在途部队',   cost: 5, target: null },
   { key: 'surge',     name: '墨涌',     desc: '己方全城 +8 兵',     cost: 6, target: null },
+  { key: 'defect',    name: '策反',     desc: '敌城三成驻军倒戈',   cost: 6, target: 'enemy' },
+  { key: 'holdfast',  name: '固守',     desc: '己城产速×3 · 8秒',   cost: 5, target: 'own' },
 ];
 var CARD_BY_KEY = {};
 CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
@@ -310,11 +312,11 @@ function mapGen(sim, opts){
     chosen.push(aiPts[aiPts.length-1]);
   }
   var aid = 0;
-  sim.castles.push({ id: aid++, owner: 1, x: home.x, y: home.y, level: 1, garrison: 20, shieldT: 0, weakT: 0, flashT: 0 });
+  sim.castles.push({ id: aid++, owner: 1, x: home.x, y: home.y, level: 1, garrison: 20, shieldT: 0, weakT: 0, flashT: 0, buffT: 0, hitT: 0 });
   for (k = 0; k < aiPts.length; k++)
-    sim.castles.push({ id: aid++, owner: 2 + k, x: aiPts[k].x, y: aiPts[k].y, level: 1, garrison: 20 + (opts.bonus || 0), shieldT: 0, weakT: 0, flashT: 0 });
+    sim.castles.push({ id: aid++, owner: 2 + k, x: aiPts[k].x, y: aiPts[k].y, level: 1, garrison: 20 + (opts.bonus || 0), shieldT: 0, weakT: 0, flashT: 0, buffT: 0, hitT: 0 });
   for (i = 0; i < pts.length; i++)
-    sim.castles.push({ id: aid++, owner: 0, x: pts[i].x, y: pts[i].y, level: 1, garrison: 10 + Math.floor(rng() * 16), shieldT: 0, weakT: 0, flashT: 0 });
+    sim.castles.push({ id: aid++, owner: 0, x: pts[i].x, y: pts[i].y, level: 1, garrison: 18 + Math.floor(rng() * 15), shieldT: 0, weakT: 0, flashT: 0, buffT: 0, hitT: 0 });   // 中立驻军固定（不产兵）
 }
 
 function drawCard(sim){ return CARDS[Math.floor(sim.rng() * CARDS.length)].key; }
@@ -440,6 +442,8 @@ function resolveArrival(sim, a){
       sim.events.push({ type: 'capture', x: c.x, y: c.y, owner: a.owner });
     } else {
       c.garrison -= a.count;
+      c.hitT = 0.25;
+      sim.events.push({ type: 'hit', x: c.x, y: c.y });
     }
   }
 }
@@ -510,6 +514,20 @@ function applyCard(sim, key, owner, targetId){
         c = sim.castles[i];
         if (c.owner === owner) c.garrison = Math.min(LEVELS[c.level - 1].cap, c.garrison + CFG.SURGE_N);
       }
+      break;
+    case 'defect':
+      c = sim.castles[targetId];
+      if (c){
+        var defectN = Math.floor(c.garrison * 0.3);
+        if (defectN >= 1){
+          c.garrison -= defectN;
+          launchArmy(sim, owner, c.x, c.y, { k: 'c', id: c.id, x: c.x, y: c.y }, defectN, c.id);
+          sim.events.push({ type: 'defect', x: c.x, y: c.y, n: defectN });
+        }
+      }
+      break;
+    case 'holdfast':
+      c = sim.castles[targetId]; if (c) c.buffT = CFG.HOLDFAST_T;
       break;
   }
 }
@@ -687,14 +705,27 @@ function aiTick(sim, owner){
   } else {
     sim.aiIdle[owner] = 0;
   }
-  /* 困难 AI 用卡：火攻玩家最大城 */
-  if (d.card && sim.t > 20 && sim.aiCardCd[owner] <= 0 && sim.ink[owner] >= 5 && rng() < 0.35){
+  /* 困难 AI 用卡：受威胁固守 → 厚城策反 → 火攻玩家最大城（共用冷却） */
+  if (d.card && sim.t > 20 && sim.aiCardCd[owner] <= 0 && rng() < 0.45){
+    var underSiege = my.filter(function(c){ return (threat[c.id] || 0) > c.garrison * 0.8; })[0];
+    if (underSiege && sim.ink[owner] >= 5){
+      applyCard(sim, 'holdfast', owner, underSiege.id);
+      sim.ink[owner] -= 5; sim.aiCardCd[owner] = 40;
+      sim.events.push({ type: 'card', key: 'holdfast', name: '固守', by: owner });
+      return;
+    }
+    var fatFoe = sim.castles.filter(function(c){ return c.owner !== owner && c.owner !== 0 && c.garrison >= 40; })[0];
+    if (fatFoe && sim.ink[owner] >= 6){
+      applyCard(sim, 'defect', owner, fatFoe.id);
+      sim.ink[owner] -= 6; sim.aiCardCd[owner] = 45;
+      sim.events.push({ type: 'card', key: 'defect', name: '策反', by: owner });
+      return;
+    }
     var pc = sim.castles.filter(function(c){ return c.owner === 1; })
                         .sort(function(x, y){ return y.garrison - x.garrison; });
-    if (pc.length){
+    if (pc.length && sim.ink[owner] >= 5){
       applyCard(sim, 'fire', owner, pc[0].id);
-      sim.ink[owner] -= 5;
-      sim.aiCardCd[owner] = 45;
+      sim.ink[owner] -= 5; sim.aiCardCd[owner] = 45;
       sim.events.push({ type: 'card', key: 'fire', name: '火攻', by: owner });
     }
   }
@@ -714,11 +745,12 @@ function step(sim, dt){
   }
   q.length = 0;
 
-  /* 2 产兵 */
+  /* 2 产兵（只有被占领的城池才增加人口，中立城驻军固定） */
   for (i = 0; i < sim.castles.length; i++){
     c = sim.castles[i];
+    if (c.owner === 0) continue;
     var L = LEVELS[c.level - 1];
-    c.garrison = Math.min(L.cap, c.garrison + L.rate * (c.weakT > 0 ? 0.5 : 1) * dt);
+    c.garrison = Math.min(L.cap, c.garrison + L.rate * (c.weakT > 0 ? 0.5 : 1) * (c.buffT > 0 ? 3 : 1) * dt);
   }
   /* 3 部队推进与抵达 */
   for (i = sim.armies.length - 1; i >= 0; i--){
@@ -771,6 +803,8 @@ function step(sim, dt){
     if (c.shieldT > 0) c.shieldT = Math.max(0, c.shieldT - dt);
     if (c.weakT > 0) c.weakT = Math.max(0, c.weakT - dt);
     if (c.flashT > 0) c.flashT = Math.max(0, c.flashT - dt);
+    if (c.buffT > 0) c.buffT = Math.max(0, c.buffT - dt);
+    if (c.hitT > 0) c.hitT = Math.max(0, c.hitT - dt);
   }
   if (sim.effects.rushT > 0) sim.effects.rushT = Math.max(0, sim.effects.rushT - dt);
   for (o = 1; o <= 4; o++) if (sim.aiCardCd[o] > 0) sim.aiCardCd[o] -= dt;
@@ -840,6 +874,7 @@ var progress = loadNum('ink.progress', 1);        // 已解锁的最大关（1..
 var best = loadNum('ink.best', 0);                // 最快胜利秒数
 var soundOn = loadNum('ink.sound', 1) === 1;
 var lastCfg = loadJSON('ink.cfg', { opponents: 1, size: 11, diff: 'normal' });
+var record = loadJSON('ink.stats', { w: 0, l: 0, streak: 0 });   // 战绩：胜/负/连胜
 
 /* ===== 音效（WebAudio 合成） ===== */
 var Sound = {
@@ -970,7 +1005,8 @@ function showMenu(){
     '</div>' +
     '<div class="mfoot">' +
       '<button class="tbtn" id="btnSound">♪ 音效：' + (soundOn ? '开' : '关') + '</button>' +
-      '<span>' + (best ? '最快胜利 ' + fmt(best) : '尚未凯旋') + '</span>' +
+      '<span>战绩 ' + record.w + '胜' + record.l + '负' + (record.streak > 1 ? ' · 连胜' + record.streak : '') +
+      ' · ' + (best ? '最快 ' + fmt(best) : '尚未凯旋') + '</span>' +
     '</div>'
   );
   document.getElementById('btnQuick').onclick = startQuick;
@@ -1015,12 +1051,13 @@ function showPause(){
 function showResult(){
   var win = sim.over === mySide;
   if (win){
+    record.w++; record.streak = Math.max(1, record.streak + 1); save('ink.stats', record);
     Sound.win();
     if (sim.opts.mode === 'campaign'){
       var lv = sim.opts.level;
       if (lv >= progress){ progress = Math.min(10, lv + 1); save('ink.progress', progress); }
     } else if (netRole === 'none' && (!best || sim.t < best)){ best = Math.floor(sim.t); save('ink.best', best); }
-  } else Sound.lose();
+  } else { record.l++; record.streak = 0; save('ink.stats', record); Sound.lose(); }
 
   var campMsg = '';
   if (sim.opts.mode === 'campaign'){
@@ -1033,7 +1070,7 @@ function showResult(){
   showOverlay(
     '<div class="stamp ' + (win ? 'win">胜<small>JIANGSHAN</small>' : 'lose">败<small>ZHENGUO</small>') + '</div>' +
     '<h1 style="font-size:24px;letter-spacing:8px;text-indent:8px">' + (win ? '江山尽入吾墨' : '卷土重来未可知') + '</h1>' +
-    '<div class="rstat">用时 <b>' + fmt(sim.t) + '</b> · 占领 <b>' + sim.stats.capturedBy[1] + '</b> 城 · 用卡 <b>' + sim.stats.cardsUsed + '</b> 张' + campMsg + '</div>' +
+    '<div class="rstat">用时 <b>' + fmt(sim.t) + '</b> · 占领 <b>' + (sim.stats.capturedBy[mySide] || 0) + '</b> 城 · 用卡 <b>' + sim.stats.cardsUsed + '</b> 张<br>生涯战绩 ' + record.w + '胜' + record.l + '负' + campMsg + '</div>' +
     '<div class="btnrow">' +
       '<button class="bb pri" id="btnAgain">' + (win ? '再来一局' : '再战此局') + '</button>' +
       '<button class="bb" id="btnMenu2">返回菜单</button>' +
@@ -1411,6 +1448,13 @@ function handleEvents(list){
       case 'clash':                              // 墨色相溶：在途部队互相湮灭
         fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.45, color: '#3a3a3a' });
         break;
+      case 'hit':                                // 城池受击红闪
+        fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.3, color: '#e03e2e' });
+        break;
+      case 'defect':                             // 策反倒戈
+        floats.push({ x: ev.x, y: ev.y - 44, txt: '策反 ' + ev.n + ' 兵倒戈', color: '#c9962e', t: 0, life: 1.2 });
+        Sound.upgrade();
+        break;
       case 'hint':
         floats.push({ x: CFG.MAP_W / 2, y: 70, txt: ev.txt, color: '#57534a', t: 0, life: 1.4 });
         break;
@@ -1433,6 +1477,8 @@ function fitCanvas(){
 }
 function drawCastle(c, selected, aimingValid, tGlobal){
   var col = castleColor(c.owner), r = castleR(c);
+  var shake = c.hitT > 0 ? Math.sin(tGlobal * 46) * 1.8 : 0;   // 受击抖动
+  var cx = c.x + shake, cy = c.y;
   if (c.flashT > 0){                                  // 占领晕染扩散环
     var k = 1 - c.flashT / 0.6;
     ctx.strokeStyle = col[0]; ctx.globalAlpha = (1 - k) * 0.8; ctx.lineWidth = 3;
@@ -1440,24 +1486,34 @@ function drawCastle(c, selected, aimingValid, tGlobal){
     ctx.beginPath(); ctx.arc(c.x, c.y, r + 4 + k * 22, 0, 7); ctx.stroke();
     ctx.globalAlpha = 1;
   }
-  var g = ctx.createRadialGradient(c.x - r * 0.35, c.y - r * 0.4, r * 0.15, c.x, c.y, r);
+  if (c.hitT > 0){                                    // 受击红闪
+    ctx.strokeStyle = 'rgba(224,62,46,' + (c.hitT * 2.2) + ')'; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.arc(cx, cy, r + 2, 0, 7); ctx.stroke();
+  }
+  if (c.buffT > 0){                                   // 固守金色产速环
+    ctx.strokeStyle = 'rgba(201,150,46,.8)'; ctx.lineWidth = 2;
+    ctx.setLineDash([3, 4]);
+    ctx.beginPath(); ctx.arc(cx, cy, r - 5, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
+  }
+  var g = ctx.createRadialGradient(cx - r * 0.35, cy - r * 0.4, r * 0.15, cx, cy, r);
   g.addColorStop(0, col[0]); g.addColorStop(1, col[1]);
   ctx.fillStyle = g;
-  ctx.beginPath(); ctx.arc(c.x, c.y, r, 0, 7); ctx.fill();
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, 7); ctx.fill();
   ctx.strokeStyle = 'rgba(0,0,0,.22)'; ctx.lineWidth = 2.5; ctx.stroke();
   ctx.setLineDash([5, 5]);                            // 等级虚线环
   ctx.strokeStyle = 'rgba(43,42,38,.35)'; ctx.lineWidth = 1.6;
-  ctx.beginPath(); ctx.arc(c.x, c.y, r + 9, 0, 7); ctx.stroke();
+  ctx.beginPath(); ctx.arc(cx, cy, r + 9, 0, 7); ctx.stroke();
   ctx.setLineDash([]);
   if (c.shieldT > 0){                                 // 护盾金环
     ctx.strokeStyle = 'rgba(201,150,46,' + (0.55 + 0.3 * Math.sin(tGlobal * 6)) + ')';
     ctx.lineWidth = 3.5;
-    ctx.beginPath(); ctx.arc(c.x, c.y, r + 5, 0, 7); ctx.stroke();
+    ctx.beginPath(); ctx.arc(cx, cy, r + 5, 0, 7); ctx.stroke();
   }
   if (c.weakT > 0){
     ctx.font = '15px "STKaiti","KaiTi","楷体",serif';
     ctx.fillStyle = 'rgba(90,60,110,.9)'; ctx.textAlign = 'center';
-    ctx.fillText('弱', c.x, c.y - r - 16);
+    ctx.fillText('弱', cx, cy - r - 16);
   }
   /* 驻军字兵环绕城池：有多少驻军画多少字，环形排布受容量封顶，整体慢旋 */
   var garrisonN = Math.min(Math.floor(c.garrison), LEVELS[c.level - 1].cap);
@@ -1470,7 +1526,7 @@ function drawCastle(c, selected, aimingValid, tGlobal){
     for (var gi = 0; gi < garrisonN; gi++){
       if (onRing >= ringCap){ ringR += 13; ringCap = Math.floor(Math.PI * 2 * ringR / 12.5); onRing = 0; }
       var ang = spin + (onRing / ringCap) * Math.PI * 2;
-      ctx.fillText('兵', c.x + Math.cos(ang) * ringR, c.y + Math.sin(ang) * ringR);
+      ctx.fillText('兵', cx + Math.cos(ang) * ringR, cy + Math.sin(ang) * ringR);
       onRing++;
     }
   }
@@ -1478,11 +1534,11 @@ function drawCastle(c, selected, aimingValid, tGlobal){
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(30,26,20,.55)';
   var txt = String(Math.floor(c.garrison));
-  ctx.strokeText(txt, c.x, c.y + 1);
-  ctx.fillStyle = '#f7f2e3'; ctx.fillText(txt, c.x, c.y + 1);
+  ctx.strokeText(txt, cx, cy + 1);
+  ctx.fillStyle = '#f7f2e3'; ctx.fillText(txt, cx, cy + 1);
   ctx.font = '11px "STKaiti","KaiTi","楷体",serif';          // 人口上限
-  ctx.fillStyle = 'rgba(245,240,224,.78)';
-  ctx.fillText('/' + LEVELS[c.level - 1].cap, c.x, c.y + 14);
+  ctx.fillStyle = c.buffT > 0 ? '#c9962e' : 'rgba(245,240,224,.78)';
+  ctx.fillText('/' + LEVELS[c.level - 1].cap, cx, cy + 14);
   if (selected){
     ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 3.5;
     ctx.beginPath(); ctx.arc(c.x, c.y, r + 14, 0, 7); ctx.stroke();
@@ -1806,7 +1862,7 @@ var Net = {
     if (!this.ch || this.ch.readyState !== 'open' || !sim) return;
     this.send({
       t: 'st', tm: +sim.t.toFixed(2), ov: sim.over, rt: +sim.effects.rushT.toFixed(1),
-      cs: sim.castles.map(function(c){ return [c.owner, c.level, +c.garrison.toFixed(1), +(c.shieldT > 0), +(c.weakT > 0), +(c.flashT > 0)]; }),
+      cs: sim.castles.map(function(c){ return [c.owner, c.level, +c.garrison.toFixed(1), +(c.shieldT > 0), +(c.weakT > 0), +(c.flashT > 0), +(c.buffT > 0), +(c.hitT > 0)]; }),
       ar: sim.armies.map(function(a){ return [a.id, a.owner, a.count, +a.x.toFixed(1), +a.y.toFixed(1), +a.tx.toFixed(1), +a.ty.toFixed(1), a.tKind === 'c' ? 1 : 0, a.tid, a.srcId, +(a.atkT > 0)]; }),
       cp: sim.camps.map(function(p){ return [p.id, p.owner, Math.round(p.count), +p.x.toFixed(1), +p.y.toFixed(1)]; }),
       ink: [0, +sim.ink[1].toFixed(1), +sim.ink[2].toFixed(1)],
@@ -1852,6 +1908,7 @@ function applySnapshot(d){
     c = sim.castles[i];
     c.owner = d.cs[i][0]; c.level = d.cs[i][1]; c.garrison = d.cs[i][2];
     c.shieldT = d.cs[i][3] ? 1 : 0; c.weakT = d.cs[i][4] ? 1 : 0; c.flashT = d.cs[i][5] ? 0.3 : 0;
+    c.buffT = d.cs[i][6] ? 1 : 0; c.hitT = d.cs[i][7] ? 0.25 : 0;
   }
   sim.armies = d.ar.map(function(r){
     return { id: r[0], owner: r[1], count: r[2], x: r[3], y: r[4], tx: r[5], ty: r[6], tKind: r[7] ? 'c' : 'pt', tid: r[8], srcId: r[9], hx: r[3], hy: r[4], atkT: r[10] ? 0.3 : 0 };

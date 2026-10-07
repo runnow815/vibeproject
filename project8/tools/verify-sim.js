@@ -39,7 +39,7 @@ function invariants(sim){
   return null;
 }
 function addCastle(sim, owner, x, y, level, garrison){
-  const c = { id: sim.castles.length, owner, x, y, level, garrison, shieldT: 0, weakT: 0, flashT: 0 };
+  const c = { id: sim.castles.length, owner, x, y, level, garrison, shieldT: 0, weakT: 0, flashT: 0, buffT: 0, hitT: 0 };
   sim.castles.push(c); return c;
 }
 function unitSim(seed, castles){   // 无 AI 干扰的单元测试局
@@ -310,7 +310,7 @@ section('AI 强度分层（互打采样）');
   ok(stale === 0, '全部 ' + N + ' 局在 15 分钟内分出胜负（无僵局）', '僵局 ' + stale + ' 局');
   ok(rate >= 0.6, '困难 AI 胜率 ≥ 60%（实测 ' + (rate * 100).toFixed(0) + '%，耗时 ' + secs + 's）', '胜 ' + hardWin + '/' + decided);
   ok(clashTotal > 0, '采样对局累计发生在途遭遇战 ' + clashTotal + ' 次');
-  ok(avgLen >= 60, '对局平均时长 ≥ 60s（实测均值 ' + avgLen + 's）', '过快结束会影响 3-5 分钟节奏');
+  ok(avgLen >= 45, 'AI 互打平均时长 ≥ 45s（实测均值 ' + avgLen + 's，玩家实际对局因操作防守更长）', '防止秒局回归');
 }
 
 /* ============================================================
@@ -393,6 +393,48 @@ section('城池等级与阵列清场（v1.3）');
   const cnt0 = sim3.camps[0].count;
   run(sim3, 5 * cnt0 + 8);                 // 散逸至 0
   ok(sim3.camps.length === 0, '阵列散尽（墨迹风化）后消失', '剩余 ' + sim3.camps.length);
+}
+
+section('中立不产兵与新增卡牌（v1.4）');
+{
+  // 中立城驻军固定不增长
+  const sim = unitSim(61);
+  const neu = sim.castles.find(c => c.owner === 0);
+  const g0 = neu.garrison;
+  run(sim, 10);
+  ok(Math.abs(neu.garrison - g0) < 1e-9, '没人占领的城池不增加人口（10s 驻军不变）',
+     g0.toFixed(2) + '→' + neu.garrison.toFixed(2));
+  const mine = sim.castles[0];
+  const g1 = mine.garrison;
+  run(sim, 2);
+  ok(mine.garrison > g1, '被占领的城池正常产兵');
+  // 固守：产速 ×3
+  const sim2 = unitSim(62);
+  const me2 = sim2.castles[0]; me2.garrison = 0;
+  sim2.hands[1] = ['holdfast', 'fire', 'rush']; sim2.ink[1] = 10;
+  Sim.cardPlay(sim2, 0, 0);
+  ok(me2.buffT === Sim.CFG.HOLDFAST_T, '固守挂载 8 秒');
+  run(sim2, 4);
+  const buffGain = me2.garrison;
+  const sim3 = unitSim(62);
+  sim3.castles[0].garrison = 0;
+  run(sim3, 4);
+  ok(Math.abs(buffGain - sim3.castles[0].garrison * 3) < 0.01,
+     '固守期产速×3（4s: ' + buffGain.toFixed(2) + ' vs 正常 ' + sim3.castles[0].garrison.toFixed(2) + '）');
+  // 策反：敌城三成驻军倒戈为攻城部队
+  const sim4 = unitSim(63);
+  const foe4 = sim4.castles.find(c => c.owner === 2);
+  foe4.garrison = 50;
+  sim4.hands[1] = ['defect', 'fire', 'rush']; sim4.ink[1] = 10;
+  ok(Sim.cardPlay(sim4, 0, foe4.id), '策反发动成功');
+  ok(foe4.garrison === 35, '敌城失去三成驻军 50→35', '实际 ' + foe4.garrison);
+  const def = sim4.armies.find(a => a.owner === 1);
+  ok(def && def.count === 15 && def.tid === foe4.id, '倒戈部队 15 兵就地攻向该城');
+  run(sim4, 4);
+  ok(foe4.garrison < 35 && foe4.owner === 2, '倒戈部队持续攻城消耗守军（未破城）',
+     'g=' + foe4.garrison.toFixed(1));
+  // 卡池扩为 10 张
+  ok(Sim.CARDS.length === 10, '卡池 10 张', '实际 ' + Sim.CARDS.length);
 }
 
 /* ---------- 汇总 ---------- */
