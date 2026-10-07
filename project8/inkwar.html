@@ -239,9 +239,9 @@ var LEVELS = [
 
 /* ratio = 扩张/输血比例；atkRatio = 进攻比例；buffer = 进攻需超过守方驻军的倍率 */
 var DIFF = {
-  easy:   { interval: 2.2, mistake: 0.40, ratio: 0.5, atkRatio: 1.0, buffer: 0.85, minPool: 12, card: false },
-  normal: { interval: 1.4, mistake: 0.15, ratio: 0.6, atkRatio: 0.9, buffer: 0.95, minPool: 10, card: false },
-  hard:   { interval: 0.7, mistake: 0.05, ratio: 0.85, atkRatio: 0.9, buffer: 0.9, minPool: 8, card: true },
+  easy:   { interval: 2.2, mistake: 0.35, ratio: 0.5,  atkRatio: 1.0, buffer: 0.85, minPool: 12, cardLv: 0, cardChance: 0,    intercept: false },
+  normal: { interval: 1.2, mistake: 0.10, ratio: 0.6,  atkRatio: 0.9, buffer: 0.9,  minPool: 10, cardLv: 1, cardChance: 0.2,  intercept: false },
+  hard:   { interval: 0.7, mistake: 0.03, ratio: 0.8,  atkRatio: 0.9, buffer: 0.85, minPool: 8,  cardLv: 2, cardChance: 0.45, intercept: true  },
 };
 
 /* target: 'foe'=敌/中立 'enemy'=仅敌方 'own'=己方 null=无需目标 */
@@ -645,24 +645,54 @@ function aiTick(sim, owner){
   var my = castlesOf(sim, owner);
   if (!my.length) return;
   var rng = sim.rng;
-  var mistake = rng() < d.mistake;   // 失误=选错目标，而非无脑送兵（否则会自我抽干锁死发展）
+  var mistake = rng() < d.mistake;   // 失误=选错目标，不无脑送兵
 
-  var threat = {}, i, c, k, sent = false;
+  var i, c, k, sent = false;
+
+  /* 感知：来犯威胁（兵力 + 预计到达时间） */
+  var threat = {}, eta = {};
   for (i = 0; i < sim.armies.length; i++){
     var a = sim.armies[i];
-    if (a.owner !== owner && a.tKind === 'c' && sim.castles[a.tid] && sim.castles[a.tid].owner === owner)
+    if (a.owner !== owner && a.tKind === 'c' && sim.castles[a.tid] && sim.castles[a.tid].owner === owner){
       threat[a.tid] = (threat[a.tid] || 0) + a.count;
+      eta[a.tid] = Math.min(eta[a.tid] || 1e9, dist(a.x, a.y, sim.castles[a.tid].x, sim.castles[a.tid].y) / CFG.SPEED);
+    }
   }
-  var pool = my.filter(function(c){ return c.garrison >= 12; });
+  var pool = my.filter(function(c){ return c.garrison >= 12 && !(threat[c.id] > 0); });   // 受威胁城不作兵源
   var pickRandom = function(){
     var t = sim.castles[Math.floor(rng() * sim.castles.length)];
     return t.owner === owner ? null : t;
   };
 
-  /* 1 扩张：己方城池不足时优先中立（弱城+近城优先，多路合击） */
+  /* 0 守备意识：己方有裸奔城且敌军在途 → 不再向外派兵（防偷家） */
+  var enemyInFlight = false;
+  for (i = 0; i < sim.armies.length; i++) if (sim.armies[i].owner !== owner){ enemyInFlight = true; break; }
+  var holdFire = enemyInFlight && my.some(function(c){ return c.garrison < 6; });
+
+  /* 1 拦截：在途强队吃掉敌方在途增援（墨色相溶的高级运用，hard 专属） */
+  if (d.intercept){
+    var myAir = sim.armies.filter(function(a){ return a.owner === owner && a.count >= 8; });
+    for (i = 0; i < sim.armies.length; i++){
+      var fa = sim.armies[i];
+      if (fa.owner === owner || fa.count < 8) continue;
+      var hunter = null, hd = Infinity;
+      for (k = 0; k < myAir.length; k++){
+        if (myAir[k].count < fa.count * 0.8) continue;
+        var dd = dist(myAir[k].x, myAir[k].y, fa.x, fa.y);
+        if (dd < hd){ hd = dd; hunter = myAir[k]; }
+      }
+      if (hunter){
+        command(sim, { type: 'retarget', owner: owner, ids: [hunter.id], to: { k: 'pt', x: fa.x, y: fa.y } });
+        sent = true;
+        break;
+      }
+    }
+  }
+
+  /* 2 扩张：弱而近优先，受威胁城不出兵 */
   var expandTo = Math.max(3, Math.ceil(sim.castles.length * 0.6));
   var neutrals = sim.castles.filter(function(c){ return c.owner === 0; });
-  if (my.length < expandTo && neutrals.length && pool.length){
+  if (!sent && !holdFire && my.length < expandTo && neutrals.length && pool.length){
     var t = mistake ? pickRandom() : null;
     if (!t){
       neutrals.forEach(function(c){
@@ -671,33 +701,36 @@ function aiTick(sim, owner){
       });
       t = t.c;
     }
-    var availE = 0;
-    pool.forEach(function(c){ availE += Math.floor(c.garrison * d.ratio); });
-    if (t && availE > t.garrison * 0.8 + 2){ aiSend(sim, owner, pool, t, d.ratio); sent = true; }
+    if (t){
+      var availE = 0;
+      pool.forEach(function(c){ availE += Math.floor(c.garrison * d.ratio); });
+      if (availE > t.garrison * 0.8 + 2){ aiSend(sim, owner, pool, t, d.ratio); sent = true; }
+    }
   }
-  /* 2 回防 */
+
+  /* 3 回防：至多两城增援受威胁城 */
   if (!sent){
     var threatened = my.filter(function(c){ return (threat[c.id] || 0) > c.garrison + 2; })
                        .sort(function(x, y){ return (threat[y.id] || 0) - (threat[x.id] || 0); });
     if (threatened.length){
       var t2 = threatened[0];
-      var near = my.filter(function(c){ return c !== t2 && c.garrison >= 8; })
+      var near = my.filter(function(c){ return c !== t2 && c.garrison >= 8 && !(threat[c.id] > 0); })
                    .sort(function(x, y){ return dist(x.x, x.y, t2.x, t2.y) - dist(y.x, y.y, t2.x, t2.y); });
-      if (near.length){ aiSend(sim, owner, [near[0]], t2, 1); sent = true; }
+      for (i = 0; i < Math.min(2, near.length); i++) aiSend(sim, owner, [near[i]], t2, 0.7);
+      if (near.length) sent = true;
     }
   }
-  /* 3 升级兜底：某城驻军远超升级所需 → 自派一波触发升级（先爬科技再打仗） */
+
+  /* 4 升级兜底（受威胁的城不升级） */
   var upC = null;
   for (k = 0; k < my.length; k++){
     c = my[k];
     var up = LEVELS[c.level - 1].up;
-    if (up && c.garrison >= up + 5 && (!upC || c.level < upC.level)) upC = c;
+    if (up && !(threat[c.id] > 0) && c.garrison >= up + 5 && (!upC || c.level < upC.level)) upC = c;
   }
-  if (upC){
-    aiSend(sim, owner, [upC], upC, 1);
-    sent = true;
-  }
-  /* 4 发育：向最前线城池（staging）输血养大兵团，途经升级阈值即自动升级 */
+  if (upC){ aiSend(sim, owner, [upC], upC, 1); sent = true; }
+
+  /* 5 前线集结：富城向前线城输血 */
   if (!sent && my.length > 1){
     var front = null, fd = Infinity;
     for (k = 0; k < my.length; k++){
@@ -720,8 +753,9 @@ function aiTick(sim, owner){
       sent = true;
     }
   }
-  /* 5 进攻：单一城池集中优势兵力一波拿下（多路分批会被逐个击破） */
-  if (!sent){
+
+  /* 6 进攻：主攻手 + 近邻协同（添头部队突破单城上限） */
+  if (!sent && !holdFire){
     var f = mistake ? pickRandom() : null;
     if (!f){
       var foes = sim.castles.filter(function(c){ return c.owner !== owner && c.owner !== 0; })
@@ -736,14 +770,22 @@ function aiTick(sim, owner){
         var v = Math.floor(c.garrison * d.atkRatio);
         if (v > bv){ bv = v; best = c; }
       }
-      if (best && bv > f.garrison * d.buffer + 4){ aiSend(sim, owner, [best], f, d.atkRatio); sent = true; }
+      if (best && bv > f.garrison * d.buffer + 4){
+        aiSend(sim, owner, [best], f, d.atkRatio);
+        for (k = 0; k < my.length; k++){
+          c = my[k];
+          if (c === best || c.garrison < 8 || dist(c.x, c.y, f.x, f.y) > dist(best.x, best.y, f.x, f.y) + 400) continue;
+          command(sim, { owner: owner, from: [{ k: 'c', id: c.id }], to: { k: 'c', id: f.id }, ratio: 0.6 });
+        }
+        sent = true;
+      }
     }
   }
-  /* 6 保底强攻：连续空转且城池接近满仓时，从最满的城池进攻最弱的外城
-     （门槛=九成容量：未满仓时出兵会中断积累造成发展锁死，满仓出兵无机会成本） */
+
+  /* 7 保底强攻：连续空转且接近满仓时打最弱外城 */
   if (!sent){
     sim.aiIdle[owner] = (sim.aiIdle[owner] || 0) + 1;
-    if (sim.aiIdle[owner] >= 3){
+    if (sim.aiIdle[owner] >= 3 && !holdFire){
       sim.aiIdle[owner] = 0;
       var src = my.slice().sort(function(x, y){ return y.garrison - x.garrison; })[0];
       var tgt = null, tg = Infinity;
@@ -760,21 +802,24 @@ function aiTick(sim, owner){
   } else {
     sim.aiIdle[owner] = 0;
   }
-  /* 困难 AI 用卡：受威胁固守 → 厚城策反 → 火攻玩家最大城（共用冷却） */
-  if (d.card && sim.t > 20 && sim.aiCardCd[owner] <= 0 && rng() < 0.45){
-    var underSiege = my.filter(function(c){ return (threat[c.id] || 0) > c.garrison * 0.8; })[0];
-    if (underSiege && sim.ink[owner] >= 5){
-      applyCard(sim, 'holdfast', owner, underSiege.id);
-      sim.ink[owner] -= 5; sim.aiCardCd[owner] = 40;
-      sim.events.push({ type: 'card', key: 'holdfast', name: '固守', by: owner });
-      return;
-    }
-    var fatFoe = sim.castles.filter(function(c){ return c.owner !== owner && c.owner !== 0 && c.garrison >= 40; })[0];
-    if (fatFoe && sim.ink[owner] >= 6){
-      applyCard(sim, 'defect', owner, fatFoe.id);
-      sim.ink[owner] -= 6; sim.aiCardCd[owner] = 45;
-      sim.events.push({ type: 'card', key: 'defect', name: '策反', by: owner });
-      return;
+
+  /* 卡牌：固守救城 → 策反厚城 → 火攻最大城（normal 仅火攻低频） */
+  if (d.cardLv >= 1 && sim.t > 20 && sim.aiCardCd[owner] <= 0 && rng() < d.cardChance){
+    if (d.cardLv >= 2){
+      var underSiege = my.filter(function(c){ return (threat[c.id] || 0) > c.garrison * 0.8; })[0];
+      if (underSiege && sim.ink[owner] >= 5){
+        applyCard(sim, 'holdfast', owner, underSiege.id);
+        sim.ink[owner] -= 5; sim.aiCardCd[owner] = 40;
+        sim.events.push({ type: 'card', key: 'holdfast', name: '固守', by: owner });
+        return;
+      }
+      var fatFoe = sim.castles.filter(function(c){ return c.owner !== owner && c.owner !== 0 && c.garrison >= 40; })[0];
+      if (fatFoe && sim.ink[owner] >= 6){
+        applyCard(sim, 'defect', owner, fatFoe.id);
+        sim.ink[owner] -= 6; sim.aiCardCd[owner] = 45;
+        sim.events.push({ type: 'card', key: 'defect', name: '策反', by: owner });
+        return;
+      }
     }
     var pc = sim.castles.filter(function(c){ return c.owner === 1; })
                         .sort(function(x, y){ return y.garrison - x.garrison; });
