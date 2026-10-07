@@ -433,8 +433,8 @@ section('中立不产兵与新增卡牌（v1.4）');
   run(sim4, 4);
   ok(foe4.garrison < 35 && foe4.owner === 2, '倒戈部队持续攻城消耗守军（未破城）',
      'g=' + foe4.garrison.toFixed(1));
-  // 卡池扩为 10 张
-  ok(Sim.CARDS.length === 10, '卡池 10 张', '实际 ' + Sim.CARDS.length);
+  // 卡池扩为 13 张（含神速行军三档）
+  ok(Sim.CARDS.length === 13, '卡池 13 张', '实际 ' + Sim.CARDS.length);
 }
 
 section('日卡被动与次卡带入（v1.5）');
@@ -458,6 +458,59 @@ section('日卡被动与次卡带入（v1.5）');
   ok(sim3.hands[1][0] === 'rush' && sim3.hands[2][0] === 'defect', '联机双方各自注入次卡');
   // 日卡不进普通摸牌池
   ok(Sim.CARDS.every(c => !Sim.DAILIES.some(d => d.key === c.key)), '日卡与次卡池隔离（摸牌不出日卡）');
+}
+
+section('神速行军 / 全军出击 / 阵列迎敌（v1.6）');
+{
+  const sim = Sim.createGame({ opponents: 1, castles: 8, diff: 'easy', seed: 81, noAI: true });
+  const me = sim.castles[0], foe = sim.castles.find(c => c.owner === 2);
+  me.level = 3; me.garrison = 0; foe.x = me.x + 600; foe.y = me.y;
+  // 神速行军星级：同 key 不同 mul，重复发动取最高
+  sim.hands[1] = ['star1', 'star3', 'rush']; sim.ink[1] = 10;
+  Sim.command(sim, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'c', id: foe.id }, ratio: 1 });
+  me.garrison = 60;
+  Sim.step(sim, DT);
+  const a = sim.armies[0];
+  ok(sim.effects.starT === 0, '未发动时无加成');
+  Sim.cardPlay(sim, 1, undefined, 1);            // ★★★
+  ok(sim.effects.starT === 8 && sim.effects.starMul === 2.0, '三星神速：行军 +100% · 8秒', 'mul=' + sim.effects.starMul);
+  Sim.cardPlay(sim, 0, undefined, 1);            // ★ 不可覆盖更高
+  ok(sim.effects.starMul === 2.0, '低星不覆盖高星加成', 'mul=' + sim.effects.starMul);
+  ok(true, '—— 星级公式查表 +30/+60/+100 ——');
+  const speed = Sim.CFG.SPEED * sim.mods.speed * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1) * (sim.effects.starT > 0 ? sim.effects.starMul : 1);
+  ok(speed === Sim.CFG.SPEED * 2.0, '速度合成：基础×神速(未发动疾行) = ' + speed);
+  // 全军出击：敌方仅剩一城
+  sim.castles.forEach(c => { if (c.owner === 2 && c.id !== foe.id) c.owner = 0; });
+  const other = addCastle(sim, 1, 300, 700, 1, 10);
+  other.garrison = 20;
+  Sim.command(sim, { type: 'allout', owner: 1, targetId: foe.id });
+  Sim.step(sim, DT);
+  ok(sim.effects.rushT >= 7.9, '全军出击附加行军加速 8 秒（含一步衰减）');
+  ok(sim.armies.filter(x => x.owner === 1).length >= 2, '全军出兵（主城+第二城+在途改向）');
+  run(sim, 30);
+  ok(sim.over === 1, '全军出击攻克最后一城获胜', 'over=' + sim.over);
+  // 阵列迎敌：强阵列全歼路过的弱敌
+  const sim2 = unitSim(82);
+  const me2 = sim2.castles[0];
+  me2.garrison = 40;
+  Sim.command(sim2, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'pt', x: me2.x + 260, y: me2.y }, ratio: 1 });
+  run(sim2, 4);
+  ok(sim2.camps.length === 1, '扎营成立');
+  const campPos = { x: sim2.camps[0].x, y: sim2.camps[0].y };
+  sim2.armies.push({ id: 9002, owner: 2, count: 10, x: campPos.x + 200, y: campPos.y, tx: me2.x, ty: me2.y, tKind: 'c', tid: 0, srcId: 1, hx: campPos.x + 200, hy: campPos.y, atkT: 0 });
+  run(sim2, 4);
+  ok(sim2.camps.length === 1 && sim2.camps[0].count >= 25 && sim2.camps[0].count <= 30, '强阵列迎敌：全歼 10 兵敌军（含风化折损）', '剩 ' + (sim2.camps[0] ? sim2.camps[0].count : 0));
+  // 弱阵列耗尽：敌军大部队突破（阵列战至最后一兵）
+  const sim3 = unitSim(83);
+  const me3 = sim3.castles[0];
+  me3.garrison = 12;
+  Sim.command(sim3, { owner: 1, from: [{ k: 'c', id: 0 }], to: { k: 'pt', x: me3.x + 260, y: me3.y }, ratio: 1 });
+  run(sim3, 4);
+  const c3 = sim3.camps[0];
+  sim3.armies.push({ id: 9003, owner: 2, count: 30, x: c3.x + 200, y: c3.y, tx: me3.x, ty: me3.y, tKind: 'c', tid: 0, srcId: 1, hx: c3.x + 200, hy: c3.y, atkT: 0 });
+  run(sim3, 6);
+  ok(sim3.camps.length === 0, '弱阵列战至最后一兵后消失', '剩余 ' + sim3.camps.length);
+  ok(me3.owner === 2 || me3.garrison < 12, '突破阵列的敌军带着折损继续行动');
 }
 
 /* ---------- 汇总 ---------- */

@@ -192,6 +192,7 @@ button{font-family:inherit;cursor:pointer}
     <span class="item"><i class="lab">我城</i><b id="myval">1</b></span>
     <span class="item"><i class="lab">敌城</i><b id="foeval">1</b></span>
     <span style="flex:1"></span>
+    <button class="tbtn" id="btnAllout" style="display:none;color:var(--cinnabar);border-color:var(--cinnabar);font-weight:700">⚔ 全军出击</button>
     <button class="tbtn" id="btnPause"><span class="wide">‖ 暂停</span><span class="narrow">‖</span></button>
   </div>
 </header>
@@ -219,7 +220,7 @@ button{font-family:inherit;cursor:pointer}
 
 var CFG = {
   MAP_W: 1600, MAP_H: 900,
-  SPEED: 120,            // 行军速度 虚拟像素/秒
+  SPEED: 90,             // 行军速度 虚拟像素/秒（v1.6 减慢，个体运动更可见）
   MIN_DIST: 240,         // 城池最小间距
   CLASH_R: 16,           // 在途遭遇半径：异主部队相遇互相湮灭（墨色相溶）
   INK_MAX: 10, INK_START: 3, INK_REGEN: 0.25,
@@ -255,6 +256,9 @@ var CARDS = [
   { key: 'surge',     name: '墨涌',     desc: '己方全城 +8 兵',     cost: 6, target: null },
   { key: 'defect',    name: '策反',     desc: '敌城三成驻军倒戈',   cost: 6, target: 'enemy' },
   { key: 'holdfast',  name: '固守',     desc: '己城产速×3 · 8秒',   cost: 5, target: 'own' },
+  { key: 'star1',     name: '神速行军·★',   desc: '行军+30% · 8秒',  cost: 3, target: null, star: 1 },
+  { key: 'star2',     name: '神速行军·★★',  desc: '行军+60% · 8秒',  cost: 4, target: null, star: 2 },
+  { key: 'star3',     name: '神速行军·★★★', desc: '行军+100% · 8秒', cost: 5, target: null, star: 3 },
 ];
 var CARD_BY_KEY = {};
 CARDS.forEach(function(c){ CARD_BY_KEY[c.key] = c; });
@@ -347,7 +351,7 @@ function createGame(opts){
     ink: [0, CFG.INK_START, CFG.INK_START, CFG.INK_START, CFG.INK_START],
     hands: { 1: [], 2: [] },           // 双玩家手牌（PVE 中 2 号为 AI，不使用）
     cmdQueue: [], events: [],
-    effects: { rushT: 0 },
+    effects: { rushT: 0, starT: 0, starMul: 1 },
     stats: { capturedBy: { 1: 0, 2: 0, 3: 0, 4: 0 }, cardsUsed: 0 },
     aiAcc: { 1: 0, 2: 0, 3: 0, 4: 0 }, aiCardCd: { 1: 0, 2: 0, 3: 0, 4: 0 },
     aiIdle: { 1: 0, 2: 0, 3: 0, 4: 0 },
@@ -560,7 +564,27 @@ function applyCard(sim, key, owner, targetId){
     case 'holdfast':
       c = sim.castles[targetId]; if (c) c.buffT = CFG.HOLDFAST_T;
       break;
+    case 'star1': case 'star2': case 'star3': {
+      var mul = 1 + [0, 0.3, 0.6, 1.0][CARD_BY_KEY[key].star];
+      sim.effects.starT = 8;
+      sim.effects.starMul = sim.effects.starMul > mul ? sim.effects.starMul : mul;
+      break;
+    }
   }
+}
+/* 全军出击：敌方仅剩一座城时的总攻——全军满额出兵 + 在途部队齐转 + 行军加速 */
+function doAllout(sim, owner, targetId){
+  var t = sim.castles[targetId]; if (!t || sim.over) return;
+  sim.effects.rushT = Math.max(sim.effects.rushT, 8);
+  var from = sim.castles.filter(function(c){ return c.owner === owner && c.garrison >= 1; })
+                        .map(function(c){ return { k: 'c', id: c.id }; });
+  if (from.length) doSend(sim, { owner: owner, from: from, to: { k: 'c', id: targetId }, ratio: 1 });
+  var camps = sim.camps.filter(function(p){ return p.owner === owner; })
+                       .map(function(p){ return { k: 'p', id: p.id }; });
+  if (camps.length) doSend(sim, { owner: owner, from: camps, to: { k: 'c', id: targetId }, ratio: 1 });
+  var ids = sim.armies.filter(function(a){ return a.owner === owner; }).map(function(a){ return a.id; });
+  if (ids.length) doRetarget(sim, { owner: owner, ids: ids, to: { k: 'c', id: targetId } });
+  sim.events.push({ type: 'allout', x: t.x, y: t.y });
 }
 function canPlay(sim, slot, owner){
   owner = owner || 1;
@@ -772,6 +796,7 @@ function step(sim, dt){
   var q = sim.cmdQueue;
   for (i = 0; i < q.length; i++){
     if (q[i].type === 'retarget') doRetarget(sim, q[i]);
+    else if (q[i].type === 'allout') doAllout(sim, q[i].owner, q[i].targetId);
     else doSend(sim, q[i]);
   }
   q.length = 0;
@@ -786,7 +811,7 @@ function step(sim, dt){
   /* 3 部队推进与抵达 */
   for (i = sim.armies.length - 1; i >= 0; i--){
     var a = sim.armies[i];
-    var sp = CFG.SPEED * sim.mods.speed * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1);
+    var sp = CFG.SPEED * sim.mods.speed * (sim.effects.rushT > 0 && a.owner === 1 ? 2 : 1) * (sim.effects.starT > 0 ? sim.effects.starMul : 1);
     var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy);
     var mv = sp * dt;
     if (d <= mv){
@@ -813,6 +838,21 @@ function step(sim, dt){
     }
   }
   sim.armies = sim.armies.filter(function(x){ return x.count >= 1; });
+  /* 3.6 阵列迎敌：扎营后敌军经过即战斗（阵列以兵力扛线，可被消耗殆尽） */
+  for (i = 0; i < sim.armies.length; i++){
+    var ca = sim.armies[i];
+    if (ca.count < 1) continue;
+    for (var j2 = sim.camps.length - 1; j2 >= 0; j2--){
+      var cp = sim.camps[j2];
+      if (cp.owner === ca.owner) continue;
+      if (dist(ca.x, ca.y, cp.x, cp.y) <= armyR(ca) + 26){
+        var kill2 = Math.min(ca.count, cp.count);
+        ca.count -= kill2; cp.count -= kill2;
+        ca.atkT = 0.35;
+        sim.events.push({ type: 'clash', x: (ca.x + cp.x) / 2, y: (ca.y + cp.y) / 2 });
+      }
+    }
+  }
   for (i = 0; i < sim.armies.length; i++){
     if (sim.armies[i].atkT > 0) sim.armies[i].atkT = Math.max(0, sim.armies[i].atkT - dt);
   }
@@ -838,6 +878,7 @@ function step(sim, dt){
     if (c.hitT > 0) c.hitT = Math.max(0, c.hitT - dt);
   }
   if (sim.effects.rushT > 0) sim.effects.rushT = Math.max(0, sim.effects.rushT - dt);
+  if (sim.effects.starT > 0) sim.effects.starT = Math.max(0, sim.effects.starT - dt);
   for (o = 1; o <= 4; o++) if (sim.aiCardCd[o] > 0) sim.aiCardCd[o] -= dt;
 
   /* 6 墨量回复 */
@@ -963,7 +1004,7 @@ var mySide = 1;                 // 本机阵营：PVE 恒为 1；联机主机 1 
 var netRole = 'none';           // none | host | guest
 var netEvts = [];               // 主机待随快照下发的表现事件
 var netT = 0;                   // 快照节流计时
-var STEP = 1 / 30, acc = 0, lastT = 0, hudT = 0;
+var STEP = 1 / 30, acc = 0, lastT = 0, hudT = 0, tNow = 0;   // tNow：渲染/命中共享的秒级时钟
 
 /* ===== 工具 ===== */
 function fmt(t){ t = Math.floor(t); return Math.floor(t / 60) + ':' + ('0' + t % 60).slice(-2); }
@@ -1300,6 +1341,16 @@ elRatio.querySelectorAll('b').forEach(function(b){
   };
 });
 elPause.onclick = function(){ if (mode === 'playing' || mode === 'paused') togglePause(); };
+document.getElementById('btnAllout').onclick = function(){
+  if (mode !== 'playing' || !sim) return;
+  var foe = sim.castles.filter(function(c){ return c.owner !== mySide && c.owner !== 0; });
+  var neutralLeft = sim.castles.filter(function(c){ return c.owner === 0; }).length;
+  if (foe.length !== 1 || neutralLeft > 0){ setHint('残局（中立清空且敌仅一城）方可全军出击'); return; }
+  var targetId = foe[0].id;
+  if (netRole === 'guest') Net.send({ t: 'cmd', kind: 'allout', targetId: targetId });
+  else Sim.command(sim, { type: 'allout', owner: mySide, targetId: targetId });
+  Sound.win();
+};
 
 /* ===== 输入（统一 Pointer，rect 缩放换算） ===== */
 function toVirtual(e){
@@ -1327,21 +1378,33 @@ function hitArmy(v, ownerFilter){
   for (var i = sim.armies.length - 1; i >= 0; i--){
     var a = sim.armies[i];
     if (ownerFilter != null && a.owner !== ownerFilter) continue;
-    if (dist(v.x, v.y, a.x, a.y) <= Sim.armyR(a) + 7) return a;
+    if (dist(v.x, v.y, a.x, a.y) <= Sim.armyR(a) + 7){
+      var units = armyFormations(a, tNow, sim && sim.effects && sim.effects.starT > 0 ? sim.effects.starMul : 1); // 找最近个体（兵级选中）
+      var best = 0, bd = Infinity;
+      for (var j = 0; j < units.length; j++){
+        var dd = dist(v.x, v.y, units[j].x, units[j].y);
+        if (dd < bd){ bd = dd; best = j; }
+      }
+      return { a: a, idx: best };
+    }
   }
   return null;
 }
 function selHas(k, id){ return selection.some(function(s){ return s.k === k && s.id === id; }); }
-function selToggle(k, id){
-  var i = selection.findIndex(function(s){ return s.k === k && s.id === id; });
-  if (i >= 0) selection.splice(i, 1); else selection.push({ k: k, id: id });
+function selToggle(k, id, idx){
+  var i = selection.findIndex(function(s){ return s.k === k && s.id === id && (k !== 's' || s.idx === idx); });
+  if (i >= 0) selection.splice(i, 1);
+  else {
+    if (k === 's') selection = selection.filter(function(x){ return x.k !== 's'; });  // 旗手唯一
+    selection.push({ k: k, id: id, idx: idx });
+  }
   Sound.select();
 }
 function pruneSelection(){
   selection = selection.filter(function(s){
     var i, o;
     if (s.k === 'c'){ var c = sim.castles[s.id]; return c && c.owner === mySide; }
-    if (s.k === 'a'){
+    if (s.k === 'a' || s.k === 's'){
       for (i = 0; i < sim.armies.length; i++){ o = sim.armies[i]; if (o.id === s.id) return o.owner === mySide; }
       return false;
     }
@@ -1355,10 +1418,10 @@ function dispatch(sources, target){
   var ids = [], from = [], i, s;
   for (i = 0; i < sources.length; i++){
     s = sources[i];
-    if (s.k === 'a'){
+    if (s.k === 'a' || s.k === 's'){
       var f = null;
       for (var j = 0; j < sim.armies.length; j++){ if (sim.armies[j].id === s.id){ f = sim.armies[j]; break; } }
-      if (f && f.owner === mySide) ids.push(s.id);
+      if (f && f.owner === mySide && ids.indexOf(s.id) < 0) ids.push(s.id);
     } else if (s.k === 'c'){
       if (sim.castles[s.id] && sim.castles[s.id].owner === mySide) from.push(s);
     } else if (s.k === 'p'){
@@ -1413,8 +1476,8 @@ canvas.addEventListener('pointerdown', function(e){
   var v = toVirtual(e);
   ptr.down = true; ptr.moved = false;
   ptr.sx = v.x; ptr.sy = v.y; ptr.x = v.x; ptr.y = v.y;
-  var a = hitArmy(v, mySide), c = a ? null : hitCastle(v, mySide), p = (a || c) ? null : hitCamp(v, mySide);
-  ptr.from = a ? { k: 'a', id: a.id } : c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
+  var hit = hitArmy(v, mySide), c = hit ? null : hitCastle(v, mySide), p = (hit || c) ? null : hitCamp(v, mySide);
+  ptr.from = hit ? { k: 'a', id: hit.a.id } : c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
 });
 canvas.addEventListener('pointermove', function(e){
   if (mode !== 'playing' || !ptr.down) return;
@@ -1475,8 +1538,8 @@ canvas.addEventListener('pointerup', function(e){
   }
 
   /* 点按 */
-  var ta = hitArmy(v, mySide), c = ta ? null : hitCastle(v), p = (ta || c) ? null : hitCamp(v, mySide);
-  if (ta){ selToggle('a', ta.id); return; }
+  var th = hitArmy(v, mySide), c = th ? null : hitCastle(v), p = (th || c) ? null : hitCamp(v, mySide);
+  if (th){ selToggle('s', th.a.id, th.idx); return; }     // 点中哪个兵就选哪个兵（指挥其所属部队）
   if (c && c.owner === mySide){ selToggle('c', c.id); return; }
   if (p && p.owner === mySide){ selToggle('p', p.id); return; }
   if (selection.length){
@@ -1503,6 +1566,8 @@ function updateHud(force){
   var my = 0, foe = 0;
   sim.castles.forEach(function(c){ if (c.owner === mySide) my++; else if (c.owner !== 0) foe++; });
   elMy.textContent = my; elFoe.textContent = foe;
+  var neutralLeft = sim ? sim.castles.filter(function(c){ return c.owner === 0; }).length : 9;
+  document.getElementById('btnAllout').style.display = (foe === 1 && neutralLeft === 0 ? '' : 'none');
   renderHandThrottled(force);
 }
 var lastHandSig = '';
@@ -1542,6 +1607,9 @@ function handleEvents(list){
         break;
       case 'hit':                                // 城池受击红闪
         fxs.push({ x: ev.x, y: ev.y, t: 0, life: 0.3, color: '#e03e2e' });
+        break;
+      case 'allout':                             // 全军出击
+        floats.push({ x: CFG.MAP_W / 2, y: 120, txt: '⚔ 全军出击 ⚔', color: '#b33327', t: 0, life: 1.6 });
         break;
       case 'defect':                             // 策反倒戈
         floats.push({ x: ev.x, y: ev.y - 44, txt: '策反 ' + ev.n + ' 兵倒戈', color: '#c9962e', t: 0, life: 1.2 });
@@ -1661,7 +1729,28 @@ function drawCamp(p, selected){
   }
 }
 /* 字兵方阵：以「兵」字建模，字号/列数随兵力，攻击时突刺+挥砍 */
-function drawArmy(a, tGlobal, selected){
+/* 队形与个体运动：每个兵有独立相位/步频/摆动（id+索引散列），渲染与点选共用 */
+function armyFormations(a, tGlobal, star){
+  var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
+  var ux = dx / d, uy = dy / d;
+  var total = Math.max(1, Math.round(a.count));
+  var cols = Math.min(8, Math.max(1, Math.ceil(Math.sqrt(total * 1.4))));
+  var fs = 13 - Math.min(4.5, total / 30);
+  var out = [];
+  for (var k = 0; k < total; k++){
+    var ph = (a.id * 37.17 + k * 2.399) % 6.283;          // 黄金角散列相位
+    var row = Math.floor(k / cols), cIdx = k % cols;
+    var side = (cIdx - (cols - 1) / 2) * fs * 0.92 + Math.sin(tGlobal * 0.9 + ph) * 1.3;
+    var back = row * fs * 0.95;
+    var bobF = 7 + star * 3 + (a.atkT > 0 ? 5 : 0);       // 神速/攻击时步频加快
+    var bob = Math.sin(tGlobal * bobF + ph) * 1.2;        // 沿行进方向的个体步幅
+    var sway = Math.cos(tGlobal * bobF * 0.6 + ph) * 0.8; // 个体横向摆动
+    out.push({ x: a.x - ux * back - uy * side + ux * bob, y: a.y - uy * back + ux * side + uy * bob, ph: ph, fs: fs, k: k });
+  }
+  return out;
+}
+function drawArmy(a, tGlobal, selected, star){
+  star = star || 1;
   var col = castleColor(a.owner);
   var dx = a.tx - a.x, dy = a.ty - a.y, d = Math.sqrt(dx*dx + dy*dy) || 1;
   var ux = dx / d, uy = dy / d;
@@ -1669,44 +1758,44 @@ function drawArmy(a, tGlobal, selected){
   var storm = a.tKind === 'c' && sim.castles[a.tid] && sim.castles[a.tid].owner !== a.owner;
   var atk = a.atkT > 0 ? Math.sin(tGlobal * 30) * 3.4 : 0;          // 遭遇突刺
   var lunge = storm ? Math.max(0, Math.sin(tGlobal * 8)) * 2.6 : 0; // 攻城推进
-  /* 全量字兵方阵：有多少兵画多少个「兵」字（紧凑多列，头部为前锋） */
+  var units = armyFormations(a, tGlobal, star);
   var total = Math.max(1, Math.round(a.count));
-  var cols = Math.min(8, Math.max(1, Math.ceil(Math.sqrt(total * 1.4))));
-  var fs = 13 - Math.min(4.5, total / 30);
-  var gapx = fs * 0.92, gapy = fs * 0.95;
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.font = 'bold ' + fs.toFixed(1) + 'px "STKaiti","KaiTi","楷体",serif';
-  var outline = fs > 10.5;
-  if (outline){ ctx.lineWidth = 2.6; ctx.strokeStyle = 'rgba(245,240,224,.85)'; }
   ctx.fillStyle = col[1];
-  for (var k = total - 1; k >= 0; k--){
-    var row = Math.floor(k / cols), cIdx = k % cols;
-    var side = (cIdx - (cols - 1) / 2) * gapx;
-    var back = row * gapy;
-    var push = k === 0 ? atk + lunge : Math.max(0, atk - row) * 0.5;
-    var gx = a.x - ux * back - uy * side;
-    var gy = a.y - uy * back + ux * side;
-    if (outline) ctx.strokeText('兵', gx + ux * push, gy + uy * push);
-    ctx.fillText('兵', gx + ux * push, gy + uy * push);
+  for (var k = units.length - 1; k >= 0; k--){
+    var u = units[k];
+    var fsK = u.fs + (Math.sin(u.ph) * 0.8);              // 个体字号微差
+    var push = k === 0 ? atk + lunge : Math.max(0, atk - Math.floor(k / 8)) * 0.5;
+    ctx.font = 'bold ' + fsK.toFixed(1) + 'px "STKaiti","KaiTi","楷体",serif';
+    if (fsK > 10.5){ ctx.lineWidth = 2.6; ctx.strokeStyle = 'rgba(245,240,224,.85)'; ctx.strokeText('兵', u.x + ux * push, u.y + uy * push); }
+    ctx.fillText('兵', u.x + ux * push, u.y + uy * push);
   }
   if (storm || a.atkT > 0){                               // 挥砍弧
-    var sw = a.x + ux * (fs * 0.9 + (atk + lunge)), swy = a.y + uy * (fs * 0.9 + (atk + lunge));
+    var sw = a.x + ux * (14 + (atk + lunge)), swy = a.y + uy * (14 + (atk + lunge));
     var base = Math.atan2(uy, ux);
     ctx.strokeStyle = 'rgba(43,42,38,' + (a.atkT > 0 ? 0.65 : 0.3) + ')';
     ctx.lineWidth = 2.2;
-    ctx.beginPath(); ctx.arc(sw, swy, fs * 0.7, base - 0.9, base + 0.9); ctx.stroke();
+    ctx.beginPath(); ctx.arc(sw, swy, 9, base - 0.9, base + 0.9); ctx.stroke();
   }
   if (a.count >= 8){
     ctx.font = 'bold 13px "STKaiti","KaiTi","楷体",serif';
     ctx.fillStyle = 'rgba(43,42,38,.8)';
     ctx.fillText(Math.floor(a.count), a.x, a.y - r - 6);
   }
-  if (selected){                                          // 选中环 = 碰撞体积可视化
+  if (selected){                                          // 整队选中环 = 碰撞体积可视化
     ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 2.5;
     ctx.setLineDash([5, 4]);
     ctx.beginPath(); ctx.arc(a.x, a.y, r + 4, 0, 7); ctx.stroke();
     ctx.setLineDash([]);
   }
+  /* 兵级选中：被点中的那个兵套金圈（旗手） */
+  var selSoldier = selection.find(function(x){ return x.k === 's' && x.id === a.id; });
+  if (selSoldier && units[selSoldier.idx]){
+    var su = units[selSoldier.idx];
+    ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 2;
+    ctx.beginPath(); ctx.arc(su.x, su.y, u_R(su.fs), 0, 7); ctx.stroke();
+  }
+  function u_R(fs){ return fs * 0.62; }
 }
 function draw(simToDraw, tGlobal){
   fitCanvas();
@@ -1720,7 +1809,8 @@ function draw(simToDraw, tGlobal){
   for (i = 0; i < simToDraw.camps.length; i++)
     drawCamp(simToDraw.camps[i], simToDraw === sim && selHas('p', simToDraw.camps[i].id));
   for (i = 0; i < simToDraw.armies.length; i++)
-    drawArmy(simToDraw.armies[i], tGlobal, simToDraw === sim && selHas('a', simToDraw.armies[i].id));
+    drawArmy(simToDraw.armies[i], tGlobal, simToDraw === sim && selHas('a', simToDraw.armies[i].id),
+             simToDraw.effects && simToDraw.effects.starT > 0 ? simToDraw.effects.starMul : 1);
   for (i = 0; i < simToDraw.castles.length; i++){
     var c = simToDraw.castles[i];
     var aimingValid = false;
@@ -1762,7 +1852,7 @@ function draw(simToDraw, tGlobal){
 /* ===== 主循环 ===== */
 function loop(t){
   var dt = Math.min(50, t - lastT);
-  lastT = t;
+  lastT = t; tNow = t / 1000;
   var i;
   if (mode === 'playing' && sim){
     if (netRole === 'guest'){
@@ -1770,7 +1860,7 @@ function loop(t){
       var ddt = Math.min(100, dt) / 1000;
       for (i = 0; i < sim.armies.length; i++){
         var ra = sim.armies[i];
-        var rsp = CFG.SPEED * (sim.effects.rushT > 0 && ra.owner === mySide ? 2 : 1) * ddt;
+        var rsp = CFG.SPEED * sim.mods.speed * (sim.effects.rushT > 0 && ra.owner === mySide ? 2 : 1) * (sim.effects.starT > 0 ? sim.effects.starMul : 1) * ddt;
         var rdx = ra.tx - ra.x, rdy = ra.ty - ra.y, rd = Math.sqrt(rdx*rdx + rdy*rdy);
         if (rd <= rsp){ ra.x = ra.tx; ra.y = ra.ty; }
         else { ra.x += rdx / rd * rsp; ra.y += rdy / rd * rsp; }
@@ -1958,7 +2048,7 @@ var Net = {
   pushSnapshot: function(){
     if (!this.ch || this.ch.readyState !== 'open' || !sim) return;
     this.send({
-      t: 'st', tm: +sim.t.toFixed(2), ov: sim.over, rt: +sim.effects.rushT.toFixed(1),
+      t: 'st', tm: +sim.t.toFixed(2), ov: sim.over, rt: +sim.effects.rushT.toFixed(1), st: sim.effects.starT > 0 ? +sim.effects.starMul.toFixed(2) : 0,
       cs: sim.castles.map(function(c){ return [c.owner, c.level, +c.garrison.toFixed(1), +(c.shieldT > 0), +(c.weakT > 0), +(c.flashT > 0), +(c.buffT > 0), +(c.hitT > 0)]; }),
       ar: sim.armies.map(function(a){ return [a.id, a.owner, a.count, +a.x.toFixed(1), +a.y.toFixed(1), +a.tx.toFixed(1), +a.ty.toFixed(1), a.tKind === 'c' ? 1 : 0, a.tid, a.srcId, +(a.atkT > 0)]; }),
       cp: sim.camps.map(function(p){ return [p.id, p.owner, Math.round(p.count), +p.x.toFixed(1), +p.y.toFixed(1)]; }),
@@ -1989,6 +2079,8 @@ var Net = {
       if (this.role !== 'host' || !sim || sim.over) return;
       if (d.kind === 'send' && d.cmd) Sim.command(sim, d.cmd);
       else if (d.kind === 'retarget' && d.cmd) Sim.command(sim, d.cmd);
+      else if (d.kind === 'allout') Sim.command(sim, { type: 'allout', owner: 2, targetId: d.targetId });
+      else if (d.kind === 'retarget' && d.cmd) Sim.command(sim, d.cmd);
       else if (d.kind === 'card') Sim.cardPlay(sim, d.slot, d.target === -1 ? undefined : d.target, 2);
       return;
     }
@@ -2000,7 +2092,7 @@ var Net = {
 /* 客机：把主机快照写入本地镜像（地图由同种子生成，城池 id/坐标一致） */
 function applySnapshot(d){
   var i, c;
-  sim.t = d.tm; sim.over = d.ov; sim.effects.rushT = d.rt || 0;
+  sim.t = d.tm; sim.over = d.ov; sim.effects.rushT = d.rt || 0; sim.effects.starT = d.st > 0 ? 1 : 0; sim.effects.starMul = d.st > 0 ? d.st : 1;
   for (i = 0; i < d.cs.length && i < sim.castles.length; i++){
     c = sim.castles[i];
     c.owner = d.cs[i][0]; c.level = d.cs[i][1]; c.garrison = d.cs[i][2];
