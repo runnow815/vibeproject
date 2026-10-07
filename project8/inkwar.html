@@ -433,7 +433,7 @@ function doSend(sim, cmd){
     var ref = cmd.from[i];
     if (srcOwner(sim, ref) !== cmd.owner) continue;
     var s = srcRef(sim, ref); if (!s) continue;
-    var n = Math.floor(s.count * cmd.ratio);
+    var n = cmd.n != null ? Math.min(cmd.n, Math.floor(s.count)) : Math.floor(s.count * cmd.ratio);
     if (n < 1) continue;
     if (ref.k === 'c') sim.castles[ref.id].garrison -= n;
     else sim.camps[ref.id].count -= n;
@@ -574,6 +574,27 @@ function applyCard(sim, key, owner, targetId){
     }
   }
 }
+/* 单兵拆分：从在途部队拆出 n 兵（默认 1）改道执行，原队继续原任务 */
+function doSplit(sim, cmd){
+  if (sim.over) return;
+  var a = null;
+  for (var j = 0; j < sim.armies.length; j++){
+    if (sim.armies[j].id === cmd.armyId){ a = sim.armies[j]; break; }
+  }
+  if (!a || a.owner !== cmd.owner) return;
+  var n = Math.min(cmd.n || 1, a.count - (a.count > 1 ? 1 : 0));
+  if (n < 1) return;
+  var target = cmd.to.k === 'c' ? (function(){ var c = sim.castles[cmd.to.id]; return c ? { k: 'c', id: c.id, x: c.x, y: c.y } : null; })() : { k: 'pt', id: -1, x: cmd.to.x, y: cmd.to.y };
+  if (!target) return;
+  a.count -= n;
+  if (a.count < 1){                                  // 全队拆走 = 改向
+    a.tx = target.x; a.ty = target.y; a.tKind = target.k; a.tid = target.id != null ? target.id : -1;
+    a.count = n;
+    return;
+  }
+  launchArmy(sim, a.owner, a.x, a.y, target, n, a.srcId >= 0 ? a.srcId : -1);
+}
+
 /* 全军出击：敌方仅剩一座城时的总攻——全军满额出兵 + 在途部队齐转 + 行军加速 */
 function doAllout(sim, owner, targetId){
   var t = sim.castles[targetId]; if (!t || sim.over) return;
@@ -844,6 +865,7 @@ function step(sim, dt){
   for (i = 0; i < q.length; i++){
     if (q[i].type === 'retarget') doRetarget(sim, q[i]);
     else if (q[i].type === 'allout') doAllout(sim, q[i].owner, q[i].targetId);
+    else if (q[i].type === 'split') doSplit(sim, q[i]);
     else doSend(sim, q[i]);
   }
   q.length = 0;
@@ -1061,6 +1083,21 @@ function castleColor(o){
 }
 function castleR(c){ return 24 + (c.level - 1) * 10; }   // 等级一/二/三级大小 24/34/44
 var campR = Sim.campR;   // 阵列规模半径（逻辑块同源）
+/* 城池驻军环字个体坐标（渲染与兵级点选共用同一公式） */
+function castleRingUnits(c, tGlobal){
+  var n = Math.min(Math.floor(c.garrison), LEVELS[c.level - 1].cap);
+  var out = [];
+  if (n <= 0) return out;
+  var rr = castleR(c) + 13, onRing = 0, ringCap = Math.floor(Math.PI * 2 * rr / 12.5);
+  var spin = tGlobal * 0.12;
+  for (var gi = 0; gi < n; gi++){
+    if (onRing >= ringCap){ rr += 13; ringCap = Math.floor(Math.PI * 2 * rr / 12.5); onRing = 0; }
+    var ang = spin + (onRing / ringCap) * Math.PI * 2;
+    out.push({ x: c.x + Math.cos(ang) * rr, y: c.y + Math.sin(ang) * rr });
+    onRing++;
+  }
+  return out;
+}
 
 /* ===== 背景离屏预渲染（宣纸 + 远山 + 印章） ===== */
 var bg = document.createElement('canvas'); bg.width = CFG.MAP_W; bg.height = CFG.MAP_H;
@@ -1422,6 +1459,39 @@ function hitCamp(v, ownerFilter){
   }
   return null;
 }
+/* 全场景兵级命中：在途/驻城/扎营的任意一个兵（取最近，≤10 虚拟像素） */
+function hitSoldier(v, ownerFilter){
+  var best = null, bd = 10;
+  function consider(src, id, idx, x, y){
+    var dd = dist(v.x, v.y, x, y);
+    if (dd < bd){ bd = dd; best = { src: src, id: id, idx: idx }; }
+  }
+  for (var i = 0; i < sim.armies.length; i++){
+    var a = sim.armies[i];
+    if (ownerFilter != null && a.owner !== ownerFilter) continue;
+    var units = armyFormations(a, tNow, sim.effects && sim.effects.starT > 0 ? sim.effects.starMul : 1);
+    for (var j = 0; j < units.length; j++) consider('a', a.id, j, units[j].x, units[j].y);
+  }
+  for (i = 0; i < sim.camps.length; i++){
+    var p = sim.camps[i];
+    if (ownerFilter != null && p.owner !== ownerFilter) continue;
+    var total = Math.max(1, Math.round(p.count));
+    for (var q = 0; q < total; q++){
+      var ph = (p.id * 41.3 + q * 2.399) % 6.283;
+      var ring = 10 + Math.floor(q / 8) * 13;
+      var ang = ph + tNow * 0.1 + Math.floor(q / 8) * 0.6;
+      consider('p', p.id, q, p.x + Math.cos(ang) * ring + Math.sin(tNow * 1.3 + ph) * 1.1,
+                            p.y + Math.sin(ang) * ring + Math.cos(tNow * 1.1 + ph) * 1.1);
+    }
+  }
+  for (i = 0; i < sim.castles.length; i++){
+    var c = sim.castles[i];
+    if (ownerFilter != null && c.owner !== ownerFilter) continue;
+    var ring = castleRingUnits(c, tNow);
+    for (var g = 0; g < ring.length; g++) consider('c', c.id, g, ring[g].x, ring[g].y);
+  }
+  return best;
+}
 function hitArmy(v, ownerFilter){
   for (var i = sim.armies.length - 1; i >= 0; i--){
     var a = sim.armies[i];
@@ -1456,6 +1526,8 @@ function pruneSelection(){
       for (i = 0; i < sim.armies.length; i++){ o = sim.armies[i]; if (o.id === s.id) return o.owner === mySide; }
       return false;
     }
+    if (s.k === 'gs'){ var gc = sim.castles[s.id]; return gc && gc.owner === mySide && s.idx < Math.floor(gc.garrison); }
+    if (s.k === 'ps'){ var gp = sim.camps[s.id]; return gp && gp.owner === mySide && s.idx < Math.floor(gp.count); }
     var p = sim.camps[s.id]; return p && p.owner === mySide;
   });
 }
@@ -1463,13 +1535,23 @@ function pruneSelection(){
 function dispatch(sources, target){
   pruneSelection();
   var to = target.k === 'c' ? { k: 'c', id: target.id } : { k: 'pt', x: target.x, y: target.y };
-  var ids = [], from = [], i, s;
+  var ids = [], from = [], soldiers = [], i, s;
   for (i = 0; i < sources.length; i++){
     s = sources[i];
-    if (s.k === 'a' || s.k === 's'){
+    if (s.k === 'a'){
       var f = null;
       for (var j = 0; j < sim.armies.length; j++){ if (sim.armies[j].id === s.id){ f = sim.armies[j]; break; } }
       if (f && f.owner === mySide && ids.indexOf(s.id) < 0) ids.push(s.id);
+    } else if (s.k === 's'){
+      var fa = null;
+      for (var j2 = 0; j2 < sim.armies.length; j2++){ if (sim.armies[j2].id === s.id){ fa = sim.armies[j2]; break; } }
+      if (fa && fa.owner === mySide) soldiers.push({ type: 'split', armyId: s.id, n: 1 });
+    } else if (s.k === 'gs'){
+      var gc = sim.castles[s.id];
+      if (gc && gc.owner === mySide && s.idx < Math.floor(gc.garrison)) soldiers.push({ type: 'send', from: { k: 'c', id: s.id }, n: 1 });
+    } else if (s.k === 'ps'){
+      var gp = sim.camps[s.id];
+      if (gp && gp.owner === mySide && s.idx < Math.floor(gp.count)) soldiers.push({ type: 'send', from: { k: 'p', id: s.id }, n: 1 });
     } else if (s.k === 'c'){
       if (sim.castles[s.id] && sim.castles[s.id].owner === mySide) from.push(s);
     } else if (s.k === 'p'){
@@ -1477,6 +1559,20 @@ function dispatch(sources, target){
     }
   }
   var did = false;
+  /* 兵级单兵指挥：选中的那一个兵单独出队执行任务 */
+  for (i = 0; i < soldiers.length; i++){
+    var sc = soldiers[i];
+    if (sc.type === 'split'){
+      var spl = { type: 'split', owner: mySide, armyId: sc.armyId, to: to, n: sc.n };
+      if (netRole === 'guest') Net.send({ t: 'cmd', kind: 'split', cmd: spl });
+      else Sim.command(sim, spl);
+    } else {
+      var snd = { owner: mySide, from: [sc.from], to: to, n: sc.n };
+      if (netRole === 'guest') Net.send({ t: 'cmd', kind: 'send', cmd: snd });
+      else Sim.command(sim, snd);
+    }
+    did = true;
+  }
   if (ids.length){
     var rt = { type: 'retarget', owner: mySide, ids: ids, to: to };
     if (netRole === 'guest') Net.send({ t: 'cmd', kind: 'retarget', cmd: rt });
@@ -1491,12 +1587,13 @@ function dispatch(sources, target){
   }
   if (!did) return;
   selection = [];                                    // 军令下达后清空选择
-  setHint(ids.length && !from.length ? '军令已改 · 部队转向新目标<br>点空地 = 改道列阵'
-                                     : '已派遣 · 重新框选可再派<br>点空地 = 列阵屯兵');
+  setHint(soldiers.length ? '单兵已出队执行任务<br>可继续点选其他兵分别指挥'
+           : ids.length && !from.length ? '军令已改 · 部队转向新目标<br>点空地 = 改道列阵'
+           : '已派遣 · 重新框选可再派<br>点空地 = 列阵屯兵');
   Sound.send();
 }
 function setHint(html){ elHint.innerHTML = html; }
-var HINT_DEFAULT = '拖框多选己方城池/行军部队<br>点击目标即派遣或改向<br>点空地可列阵屯兵';
+var HINT_DEFAULT = '单击任意一个兵可单独指挥<br>拖框多选 / 点击目标派遣或改向<br>点空地可列阵屯兵';
 function boxSelect(x0, y0, x1, y1){
   var lx = Math.min(x0, x1), rx = Math.max(x0, x1), ty = Math.min(y0, y1), by = Math.max(y0, y1);
   boxRect = { x: lx, y: ty, w: rx - lx, h: by - ty };
@@ -1524,8 +1621,10 @@ canvas.addEventListener('pointerdown', function(e){
   var v = toVirtual(e);
   ptr.down = true; ptr.moved = false;
   ptr.sx = v.x; ptr.sy = v.y; ptr.x = v.x; ptr.y = v.y;
-  var hit = hitArmy(v, mySide), c = hit ? null : hitCastle(v, mySide), p = (hit || c) ? null : hitCamp(v, mySide);
-  ptr.from = hit ? { k: 'a', id: hit.a.id } : c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
+  var sol = hitSoldier(v, mySide);                     // 兵级优先：任何情况都可单独选中某一个兵
+  var hit = sol ? null : hitArmy(v, mySide), c = (sol || hit) ? null : hitCastle(v, mySide), p = (sol || hit || c) ? null : hitCamp(v, mySide);
+  ptr.from = sol ? { k: sol.src === 'a' ? 's' : sol.src === 'p' ? 'ps' : 'gs', id: sol.id, idx: sol.idx }
+           : hit ? { k: 'a', id: hit.a.id } : c ? { k: 'c', id: c.id } : p ? { k: 'p', id: p.id } : null;
 });
 canvas.addEventListener('pointermove', function(e){
   if (mode !== 'playing' || !ptr.down) return;
@@ -1586,8 +1685,9 @@ canvas.addEventListener('pointerup', function(e){
   }
 
   /* 点按 */
-  var th = hitArmy(v, mySide), c = th ? null : hitCastle(v), p = (th || c) ? null : hitCamp(v, mySide);
-  if (th){ selToggle('s', th.a.id, th.idx); return; }     // 点中哪个兵就选哪个兵（指挥其所属部队）
+  var sol = hitSoldier(v, mySide);
+  if (sol){ selToggle(sol.src === 'a' ? 's' : sol.src === 'p' ? 'ps' : 'gs', sol.id, sol.idx); return; }
+  var c = hitCastle(v), p = c ? null : hitCamp(v, mySide);
   if (c && c.owner === mySide){ selToggle('c', c.id); return; }
   if (p && p.owner === mySide){ selToggle('p', p.id); return; }
   if (selection.length){
@@ -1723,20 +1823,18 @@ function drawCastle(c, selected, aimingValid, tGlobal){
     ctx.fillStyle = 'rgba(90,60,110,.9)'; ctx.textAlign = 'center';
     ctx.fillText('弱', cx, cy - r - 16);
   }
-  /* 驻军字兵环绕城池：有多少驻军画多少字，环形排布受容量封顶，整体慢旋 */
-  var garrisonN = Math.min(Math.floor(c.garrison), LEVELS[c.level - 1].cap);
-  if (garrisonN > 0){
-    var ringR = r + 13, onRing = 0, ringCap = Math.floor(Math.PI * 2 * ringR / 12.5);
-    ctx.font = '10px "STKaiti","KaiTi","楷体",serif';
-    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillStyle = col[1];
-    var spin = tGlobal * 0.12;
-    for (var gi = 0; gi < garrisonN; gi++){
-      if (onRing >= ringCap){ ringR += 13; ringCap = Math.floor(Math.PI * 2 * ringR / 12.5); onRing = 0; }
-      var ang = spin + (onRing / ringCap) * Math.PI * 2;
-      ctx.fillText('兵', cx + Math.cos(ang) * ringR, cy + Math.sin(ang) * ringR);
-      onRing++;
+  /* 驻军字兵环绕城池：有多少驻军画多少字（个体坐标与兵级点选共用 castleRingUnits） */
+  var ringUnits = castleRingUnits(c, tGlobal);
+  ctx.font = '10px "STKaiti","KaiTi","楷体",serif';
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  ctx.fillStyle = col[1];
+  for (var gi = 0; gi < ringUnits.length; gi++){
+    var gu = ringUnits[gi];
+    if (selection.some(function(x){ return x.k === 'gs' && x.id === c.id && x.idx === gi; })){
+      ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(gu.x, gu.y, 6.5, 0, 7); ctx.stroke();
     }
+    ctx.fillText('兵', gu.x, gu.y);
   }
   ctx.font = 'bold 20px "STKaiti","KaiTi","楷体",serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
@@ -1776,6 +1874,10 @@ function drawCamp(p, tGlobal, selected){
     var gy = p.y + Math.sin(ang) * ring + jy;
     var fs = 11.5;
     ctx.font = 'bold ' + fs + 'px "STKaiti","KaiTi","楷体",serif';
+    if (selection.some(function(x){ return x.k === 'ps' && x.id === p.id && x.idx === k; })){
+      ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 1.8;
+      ctx.beginPath(); ctx.arc(gx, gy, 6.5, 0, 7); ctx.stroke();
+    }
     if (fs > 10.5){ ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(245,240,224,.8)'; ctx.strokeText('兵', gx, gy); }
     ctx.fillStyle = col[1];
     ctx.fillText('兵', gx, gy);
@@ -2144,7 +2246,7 @@ var Net = {
       if (d.kind === 'send' && d.cmd) Sim.command(sim, d.cmd);
       else if (d.kind === 'retarget' && d.cmd) Sim.command(sim, d.cmd);
       else if (d.kind === 'allout') Sim.command(sim, { type: 'allout', owner: 2, targetId: d.targetId });
-      else if (d.kind === 'retarget' && d.cmd) Sim.command(sim, d.cmd);
+      else if (d.kind === 'split' && d.cmd) Sim.command(sim, d.cmd);
       else if (d.kind === 'card') Sim.cardPlay(sim, d.slot, d.target === -1 ? undefined : d.target, 2);
       return;
     }
