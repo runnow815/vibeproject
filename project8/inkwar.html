@@ -385,6 +385,8 @@ function command(sim, cmd){ if (!sim.over) sim.cmdQueue.push(cmd); }
 
 /* 部队碰撞/体型半径：随兵力缩放（用于遭遇判定、命中测试、选中环） */
 function armyR(a){ return 9 + Math.min(8, Math.sqrt(a.count) * 1.3); }
+/* 阵列规模半径：随驻扎兵力缩放（迎敌判定、命中测试） */
+function campR(p){ return 16 + Math.min(22, Math.sqrt(p.count) * 2.2); }
 
 function srcRef(sim, ref){                       // ref: {k:'c'|'p'|'a', id}
   if (ref.k === 'c'){ var c = sim.castles[ref.id]; return c ? { count: c.garrison, x: c.x, y: c.y, srcId: c.id } : null; }
@@ -890,7 +892,7 @@ function step(sim, dt){
     for (var j2 = sim.camps.length - 1; j2 >= 0; j2--){
       var cp = sim.camps[j2];
       if (cp.owner === ca.owner) continue;
-      if (dist(ca.x, ca.y, cp.x, cp.y) <= armyR(ca) + 26){
+      if (dist(ca.x, ca.y, cp.x, cp.y) <= armyR(ca) + campR(cp)){
         var kill2 = Math.min(ca.count, cp.count);
         ca.count -= kill2; cp.count -= kill2;
         ca.atkT = 0.35;
@@ -958,7 +960,7 @@ function step(sim, dt){
 /* ---------- 导出 ---------- */
 var InkSim = { CFG: CFG, LEVELS: LEVELS, DIFF: DIFF, CARDS: CARDS, CAMPAIGN: CAMPAIGN,
                createGame: createGame, command: command, cardPlay: cardPlay, canPlay: canPlay,
-               validTarget: validTarget, step: step, aiTick: aiTick, dist: dist, armyR: armyR, DAILIES: DAILIES };
+               validTarget: validTarget, step: step, aiTick: aiTick, dist: dist, armyR: armyR, campR: campR, DAILIES: DAILIES };
 if (typeof window !== 'undefined') window.InkSim = InkSim;
 if (typeof module !== 'undefined' && module.exports) module.exports = InkSim;
 })();
@@ -1058,6 +1060,7 @@ function castleColor(o){
          o === 3 ? ['#c08a52', '#7a4c22'] : o === 4 ? ['#5d8a5e', '#2f5230'] : ['#a09a8a', '#6f6a5c'];
 }
 function castleR(c){ return 24 + (c.level - 1) * 10; }   // 等级一/二/三级大小 24/34/44
+var campR = Sim.campR;   // 阵列规模半径（逻辑块同源）
 
 /* ===== 背景离屏预渲染（宣纸 + 远山 + 印章） ===== */
 var bg = document.createElement('canvas'); bg.width = CFG.MAP_W; bg.height = CFG.MAP_H;
@@ -1412,10 +1415,10 @@ function hitCastle(v, ownerFilter){
   return null;
 }
 function hitCamp(v, ownerFilter){
-  for (var i = 0; i < sim.camps.length; i++){
+  for (var i = sim.camps.length - 1; i >= 0; i--){
     var p = sim.camps[i];
     if (ownerFilter != null && p.owner !== ownerFilter) continue;
-    if (dist(v.x, v.y, p.x, p.y) <= 34) return p;
+    if (dist(v.x, v.y, p.x, p.y) <= campR(p) + 8) return p;
   }
   return null;
 }
@@ -1757,20 +1760,36 @@ function drawCastle(c, selected, aimingValid, tGlobal){
     ctx.beginPath(); ctx.arc(c.x, c.y, r + 13, 0, 7); ctx.stroke();
   }
 }
-function drawCamp(p, selected){
+/* 阵列：所有驻扎字兵全部显示（散布群驻，个体微动），不再用「屯N」省略 */
+function drawCamp(p, tGlobal, selected){
   var col = castleColor(p.owner);
-  ctx.save();
-  ctx.translate(p.x, p.y); ctx.rotate(Math.PI / 4);
-  ctx.strokeStyle = col[1]; ctx.lineWidth = 2; ctx.setLineDash([6, 4]);
-  ctx.strokeRect(-17, -17, 34, 34);
-  ctx.fillStyle = 'rgba(179,51,39,.10)'; ctx.fillRect(-17, -17, 34, 34);
-  ctx.restore();
-  ctx.setLineDash([]);
-  ctx.font = 'bold 14px "STKaiti","KaiTi","楷体",serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-  ctx.fillStyle = col[1]; ctx.fillText('屯' + Math.floor(p.count), p.x, p.y);
+  var total = Math.max(1, Math.round(p.count));
+  var R = campR(p);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (var k = total - 1; k >= 0; k--){
+    var ph = (p.id * 41.3 + k * 2.399) % 6.283;
+    var ring = 10 + Math.floor(k / 8) * 13;               // 每圈 8 兵，逐圈外扩
+    var ang = ph + tGlobal * 0.1 + Math.floor(k / 8) * 0.6;
+    var jx = Math.sin(tGlobal * 1.3 + ph) * 1.1;          // 个体微动
+    var jy = Math.cos(tGlobal * 1.1 + ph) * 1.1;
+    var gx = p.x + Math.cos(ang) * ring + jx;
+    var gy = p.y + Math.sin(ang) * ring + jy;
+    var fs = 11.5;
+    ctx.font = 'bold ' + fs + 'px "STKaiti","KaiTi","楷体",serif';
+    if (fs > 10.5){ ctx.lineWidth = 2.4; ctx.strokeStyle = 'rgba(245,240,224,.8)'; ctx.strokeText('兵', gx, gy); }
+    ctx.fillStyle = col[1];
+    ctx.fillText('兵', gx, gy);
+  }
+  if (p.count >= 8){
+    ctx.font = 'bold 12px "STKaiti","KaiTi","楷体",serif';
+    ctx.fillStyle = 'rgba(43,42,38,.75)';
+    ctx.fillText(Math.floor(p.count), p.x, p.y - R - 8);
+  }
   if (selected){
-    ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 3;
-    ctx.beginPath(); ctx.arc(p.x, p.y, 26, 0, 7); ctx.stroke();
+    ctx.strokeStyle = '#c9962e'; ctx.lineWidth = 2.5;
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath(); ctx.arc(p.x, p.y, R + 5, 0, 7); ctx.stroke();
+    ctx.setLineDash([]);
   }
 }
 /* 字兵方阵：以「兵」字建模，字号/列数随兵力，攻击时突刺+挥砍 */
@@ -1852,7 +1871,7 @@ function draw(simToDraw, tGlobal){
 
   var i;
   for (i = 0; i < simToDraw.camps.length; i++)
-    drawCamp(simToDraw.camps[i], simToDraw === sim && selHas('p', simToDraw.camps[i].id));
+    drawCamp(simToDraw.camps[i], tGlobal, simToDraw === sim && selHas('p', simToDraw.camps[i].id));
   for (i = 0; i < simToDraw.armies.length; i++)
     drawArmy(simToDraw.armies[i], tGlobal, simToDraw === sim && selHas('a', simToDraw.armies[i].id),
              simToDraw.effects && simToDraw.effects.starT > 0 ? simToDraw.effects.starMul : 1);
