@@ -12,3 +12,6 @@ Thumbs.db
 
 # ZCode 本地会话数据
 .zcode/
+
+# WorkBuddy 本地会话与记忆数据
+.workbuddy/

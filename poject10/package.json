@@ -1,0 +1,23 @@
+{
+  "name": "bubble-battle",
+  "version": "1.1.0",
+  "private": true,
+  "description": "Q版泡泡堂风格的联机炸弹对战游戏（服务端权威 + 客户端预测）",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js",
+    "dev": "node server/index.js",
+    "test": "node test/motion.test.js && node test/game.test.js && node test/team.test.js && node test/lineup.test.js && node test/bot.test.js && node test/net.test.js && node test/hybrid.test.js",
+    "test:server": "node test/validate.test.js && node test/store.test.js && node test/chat.test.js && node test/robust.test.js",
+    "test:browser": "node test/smooth.js && node test/canvas.js && node test/responsive.js && node test/enhance.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.1"
+  }
+}

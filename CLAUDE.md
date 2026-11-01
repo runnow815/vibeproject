@@ -39,6 +39,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 │   ├── tools/
 │   │   └── verify-sim.js ← 模拟核心无头验证器（Node）
 │   └── README.md      ← 项目说明
+├── project9/          ← 海盗军团抢宝藏 · Mutiny 复刻
+│   ├── mutiny.html    ← 回合制海盗对垒（Canvas，单文件）
+│   ├── docs/
+│   │   └── HANDOVER.md ← 交接文档（架构/代码地图/踩坑记录/backlog）
+│   ├── tools/
+│   │   └── verify-mutiny.js ← 游戏核心无头验证器（Node）
+│   └── README.md      ← 项目说明
 ├── CLAUDE.md          ← 本文件
 └── .gitignore
 ```
@@ -139,6 +146,23 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - `node tools/verify-sim.js`：56 项断言（地图/占领/升级/8 卡/阵列/遭遇战/不变量/AI 分层采样）
 - WebAudio 合成音效，进度/最快胜利/音效/配置持久化（localStorage 前缀 `ink.`）
 
+### project9 — 海盗军团抢宝藏 · Mutiny 复刻
+
+复刻 Nitrome《Mutiny》（4399 译名「海盗军团抢宝藏」）的回合制海盗对垒游戏（v3）：
+- 核心循环：点选海盗 → 选工具 → **弹簧拉弓**（按住往反方向拉、松手朝反向弹射，拉得越远力越大，带真实弹道预览）→ 结算后轮到对方
+- **抛射移动**（每回合每人 1 次，移动后同回合仍可攻击）：拉弓把自己弹飞，落地自动拾取身边道具，撞敌人=神风伤害，落水=出局；AI 同样会抛射捡道具/战术前移
+- **大地图 + 相机**：地图宽 1600~2400（视口 960），鼠标移到画面边缘自动平移、小地图点击/拖动跳转（带视口框）、Tab 换人镜头跟随
+- **像素级可破坏地形**：Terrain 双层架构（Uint8Array 实心位图权威数据 + canvas 离屏渲染），爆炸挖洞（destination-out）+ 烧焦环（source-atop），支撑面按列采样实时重算，地面塌了单位/道具会下落，炸穿岛底敌人坠海
+- **道具**：宝箱（随机武器，降落伞空投+关卡预置）/ 朗姆酒桶（+35HP）/ 火药桶（被炸殉爆、连锁、可炸穿地形）
+- 12 种武器：樱桃炸弹∞ / 炸药（弹跳延时爆）/ 大滚石（滚动碾压）/ 八块钱（8 枚散弹）/ 燃烧瓶（爆+火海）/ 香蕉炸弹（4 连弹跳、点击手动引爆）/ 降落伞炸弹（开伞后鼠标牵引）/ 板条箱（掩体，可站可挡弹）/ 大炮（直线）/ 铁锚（点击天降）/ 地雷（感应触发）/ 巫毒娃娃（锁定敌人反向拉弓弹飞）
+- 5 个单人关卡（码头交锋/跳岛作战/战舰炮战/骷髅岛眼窝掩体/终极海滩含大帽子 Boss，程序生成地形：colFill 轮廓/blob 噪声岛/船体）+ 本地双人对战（同屏轮流），通关顺序解锁
+- AI：弹道模拟求解（扫描角度×力度）+ 弹簧方向适配 + 误差随关卡递减 + 友军误伤规避
+- 被击飞物理：爆炸冲击 → 抛体飞行 → 落地吸附/撞击伤害/落水出局；四种地形材质（草/沙/岩/木）
+- 小地图（地形实时缩略+敌我红蓝点+道具+视口框）、回合横幅、爆炸震屏、受击白闪
+- 回合管线：input → resolve（等全部结算）→ 换边；resolveKind 区分移动/攻击结算；三重防死锁保险丝（弹道 25s / 飞行 8s / 结算 30s）
+- `node tools/verify-mutiny.js`：65 项断言（Terrain 数据层/挖洞/弹簧方向/抛射移动/相机/道具/地形破坏/回合管线/AI 输出/完整模拟对战/全关连打）
+- WebAudio 合成音效 18 种，音效开关，进度持久化（localStorage 前缀 `mutiny3.`）
+
 ## 常用命令
 
 ```bash
@@ -158,8 +182,12 @@ start project6/snake.html
 start project7/plane.html
 # 打开墨战
 start project8/inkwar.html
+# 打开海盗军团抢宝藏
+start project9/mutiny.html
 # 运行墨战模拟核心验证
 node project8/tools/verify-sim.js
+# 运行海盗军团游戏核心验证
+node project9/tools/verify-mutiny.js
 ```
 
 ## 通用代码模式
